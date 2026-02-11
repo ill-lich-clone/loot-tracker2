@@ -1735,6 +1735,7 @@ function cityBuy(rawArg, playerid) {
         store.cal.gregorian.currentDay = Math.max(1, Math.floor(toNumber(store.cal.gregorian.currentDay, 1)))
 
         if (store.cal.gregorian.mode !== 'gregorian') {
+
           
             calSyncGregorianFromDay(store.cal)
             store.cal.gregorian.mode = 'gregorian'
@@ -2029,6 +2030,7 @@ function cityBuy(rawArg, playerid) {
         if (!canEdit(playerid)) return whisper(playerid, openReport + "<div style='color:#fff;'>Недостаточно прав (нужен ГМ)</div>" + closeReport)
 
         calCleanupMissingTokens()
+      
         const src = String(rawArg || '').trim()
         const parts = src.split('|').map(s => (s || '').trim()).filter(Boolean)
 
@@ -2037,6 +2039,7 @@ function cityBuy(rawArg, playerid) {
         let y = parts[0]
         let m = parts[1]
         let d = parts[2]
+        main
 
         if (!y || !m || !d) {
             const nums = src.match(/-?\d+/g) || []
@@ -2054,7 +2057,7 @@ function cityBuy(rawArg, playerid) {
             )
             return showCalMenu(playerid)
         }
-
+      
         const parts = String(rawArg || '').split('|').map(s => (s || '').trim())
         const y = parts[0]
         const m = parts[1]
@@ -2062,6 +2065,7 @@ function cityBuy(rawArg, playerid) {
         if (!y || !m || !d) return showCalMenu(playerid)
 
 
+        main
         calSetDate(y, m, d)
 
         calScanNow()
@@ -2083,9 +2087,9 @@ function cityBuy(rawArg, playerid) {
         if (!canEdit(playerid)) return whisper(playerid, openReport + "<div style='color:#fff;'>Недостаточно прав (нужен ГМ)</div>" + closeReport)
     
         const cal = getCalStore()
-        const parts = String(rawArg || '').split('|').map(s => (s || '').trim())
-        const name = parts[0] || ''
-        const days = toNumber(parts[1], NaN)
+        const cdParts = String(rawArg || '').split('|').map(s => (s || '').trim())
+        const name = cdParts[0] || ''
+        const days = toNumber(cdParts[1], NaN)
     
         if (!name || isNaN(days) || days < 0) return showCalMenu(playerid)
     
