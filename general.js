@@ -1735,11 +1735,14 @@ function cityBuy(rawArg, playerid) {
         store.cal.gregorian.currentDay = Math.max(1, Math.floor(toNumber(store.cal.gregorian.currentDay, 1)))
 
         if (store.cal.gregorian.mode !== 'gregorian') {
+          
+            calSyncGregorianFromDay(store.cal)
             store.cal.gregorian.mode = 'gregorian'
+        } else {
+            calSyncDayFromGregorian(store.cal)
+            calSyncGregorianFromDay(store.cal)
         }
-        // day остаётся источником правды для совместимости старой логики CD,
-        // а григорианская дата — его отображение в UI.
-        calSyncGregorianFromDay(store.cal)
+        main
     
         store.cal.pageName = store.cal.pageName || CAL_DEFAULT_PAGE_NAME
         store.cal.marker = store.cal.marker || CAL_MARKER
@@ -2026,7 +2029,6 @@ function cityBuy(rawArg, playerid) {
         if (!canEdit(playerid)) return whisper(playerid, openReport + "<div style='color:#fff;'>Недостаточно прав (нужен ГМ)</div>" + closeReport)
 
         calCleanupMissingTokens()
-
         const src = String(rawArg || '').trim()
         const parts = src.split('|').map(s => (s || '').trim()).filter(Boolean)
 
@@ -2052,6 +2054,13 @@ function cityBuy(rawArg, playerid) {
             )
             return showCalMenu(playerid)
         }
+
+        const parts = String(rawArg || '').split('|').map(s => (s || '').trim())
+        const y = parts[0]
+        const m = parts[1]
+        const d = parts[2]
+        if (!y || !m || !d) return showCalMenu(playerid)
+
 
         calSetDate(y, m, d)
 
