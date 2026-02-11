@@ -1727,6 +1727,20 @@ function cityBuy(rawArg, playerid) {
     
         store.cal.day = toNumber(store.cal.day, 1)
         if (store.cal.day < 1) store.cal.day = 1
+
+        store.cal.gregorian = store.cal.gregorian || {}
+        store.cal.gregorian.epoch = store.cal.gregorian.epoch || { year: 2018, month: 1, day: 1 }
+        store.cal.gregorian.currentYear = Math.floor(toNumber(store.cal.gregorian.currentYear, 2018))
+        store.cal.gregorian.currentMonth = Math.max(1, Math.min(12, Math.floor(toNumber(store.cal.gregorian.currentMonth, 1))))
+        store.cal.gregorian.currentDay = Math.max(1, Math.floor(toNumber(store.cal.gregorian.currentDay, 1)))
+
+        if (store.cal.gregorian.mode !== 'gregorian') {
+            calSyncGregorianFromDay(store.cal)
+            store.cal.gregorian.mode = 'gregorian'
+        } else {
+            calSyncDayFromGregorian(store.cal)
+            calSyncGregorianFromDay(store.cal)
+        }
     
         store.cal.pageName = store.cal.pageName || CAL_DEFAULT_PAGE_NAME
         store.cal.marker = store.cal.marker || CAL_MARKER
@@ -1770,11 +1784,122 @@ function cityBuy(rawArg, playerid) {
         const next = list.filter(m => !(m === marker || m.indexOf(marker + '@') === 0))
         token.set('statusmarkers', next.join(','))
     }
+
+    function isGregorianLeapYear(year) {
+        const y = Math.floor(toNumber(year, 0))
+        if (y % 400 === 0) return true
+        if (y % 100 === 0) return false
+        return (y % 4 === 0)
+    }
+
+    function gregorianDaysInMonth(year, month) {
+        const y = Math.floor(toNumber(year, 2000))
+        const m = Math.max(1, Math.min(12, Math.floor(toNumber(month, 1))))
+        if (m === 2) return isGregorianLeapYear(y) ? 29 : 28
+        if (m === 4 || m === 6 || m === 9 || m === 11) return 30
+        return 31
+    }
+
+    function gregorianToDaySerial(year, month, day, cal) {
+        const y = Math.floor(toNumber(year, 2018))
+        const m = Math.max(1, Math.min(12, Math.floor(toNumber(month, 1))))
+        const dim = gregorianDaysInMonth(y, m)
+        const d = Math.max(1, Math.min(dim, Math.floor(toNumber(day, 1))))
+
+        const epoch = (cal && cal.gregorian && cal.gregorian.epoch) ? cal.gregorian.epoch : { year: 2018, month: 1, day: 1 }
+        const curMs = Date.UTC(y, m - 1, d)
+        const epMs = Date.UTC(Math.floor(toNumber(epoch.year, 2018)), Math.floor(toNumber(epoch.month, 1)) - 1, Math.floor(toNumber(epoch.day, 1)))
+        const deltaDays = Math.floor((curMs - epMs) / 86400000)
+        return Math.max(1, 1 + deltaDays)
+    }
+
+    function daySerialToGregorian(serial, cal) {
+        const n = Math.max(1, Math.floor(toNumber(serial, 1)))
+        const epoch = (cal && cal.gregorian && cal.gregorian.epoch) ? cal.gregorian.epoch : { year: 2018, month: 1, day: 1 }
+        const epMs = Date.UTC(Math.floor(toNumber(epoch.year, 2018)), Math.floor(toNumber(epoch.month, 1)) - 1, Math.floor(toNumber(epoch.day, 1)))
+        const ms = epMs + (n - 1) * 86400000
+        const dt = new Date(ms)
+        return {
+            year: dt.getUTCFullYear(),
+            month: dt.getUTCMonth() + 1,
+            day: dt.getUTCDate()
+        }
+    }
+
+    function gregorianWeekdayMon0(year, month, day) {
+        const wd = new Date(Date.UTC(year, month - 1, day)).getUTCDay() // 0=Sun
+        return (wd + 6) % 7 // 0=Mon
+    }
+
+    function moonPhaseNameByDaySerial(serial) {
+        const phases = ['🌑 Новолуние', '🌒 Растущий серп', '🌓 Первая четверть', '🌔 Растущая луна', '🌕 Полнолуние', '🌖 Убывающая луна', '🌗 Последняя четверть', '🌘 Убывающий серп']
+        const cycle = 29.530588853
+        const age = ((Math.max(1, serial) - 1) % cycle + cycle) % cycle
+        const idx = Math.floor((age / cycle) * phases.length) % phases.length
+        return { text: phases[idx], age: age }
+    }
+
+    function renderGregorianCalendarTable(year, month, currentDay) {
+        const weekdays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
+        const firstW = gregorianWeekdayMon0(year, month, 1)
+        const totalDays = gregorianDaysInMonth(year, month)
+
+        let html = "<table style='width:100%; border-collapse:collapse; margin-top:6px;'>"
+        html += "<tr>" + weekdays.map(w => "<th style='border:1px solid #444; padding:2px; font-size:11px; color:#bbb;'>" + w + "</th>").join('') + "</tr>"
+
+        let dayNum = 1
+        for (let r = 0; r < 6; r++) {
+            html += "<tr>"
+            for (let c = 0; c < 7; c++) {
+                const cellIndex = r * 7 + c
+                const inMonth = cellIndex >= firstW && dayNum <= totalDays
+                if (!inMonth) {
+                    html += "<td style='border:1px solid #333; padding:4px; color:#555;'>&nbsp;</td>"
+                    continue
+                }
+
+                const isCur = dayNum === currentDay
+                const cellStyle = isCur
+                    ? "border:1px solid #c29748; padding:4px; text-align:center; background:#2a2a2a; color:#fff; font-weight:bold;"
+                    : "border:1px solid #333; padding:4px; text-align:center; color:#ddd;"
+                html += "<td style='" + cellStyle + "'>" + dayNum + "</td>"
+                dayNum += 1
+            }
+            html += "</tr>"
+            if (dayNum > totalDays) break
+        }
+
+        html += "</table>"
+        return html
+    }
+
+    function monthNameRu(month) {
+        const names = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь']
+        const m = Math.max(1, Math.min(12, Math.floor(toNumber(month, 1))))
+        return names[m - 1]
+    }
+
+    function weekdayNameRuMon0(idx) {
+        const names = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота', 'Воскресенье']
+        return names[Math.max(0, Math.min(6, Math.floor(toNumber(idx, 0))))]
+    }
+
+    function calSyncGregorianFromDay(cal) {
+        const d = daySerialToGregorian(cal.day, cal)
+        cal.gregorian.currentYear = d.year
+        cal.gregorian.currentMonth = d.month
+        cal.gregorian.currentDay = d.day
+    }
+
+    function calSyncDayFromGregorian(cal) {
+        cal.day = gregorianToDaySerial(cal.gregorian.currentYear, cal.gregorian.currentMonth, cal.gregorian.currentDay, cal)
+    }
     
     function calAdvanceDays(n) {
         const cal = getCalStore()
         n = Math.max(1, Math.floor(toNumber(n, 1)))
         cal.day = Math.max(1, cal.day + n)
+        calSyncGregorianFromDay(cal)
     }
     
     function calSetDay(day) {
@@ -1782,6 +1907,20 @@ function cityBuy(rawArg, playerid) {
         day = Math.floor(toNumber(day, 1))
         if (day < 1) day = 1
         cal.day = day
+        calSyncGregorianFromDay(cal)
+    }
+
+    function calSetDate(year, month, day) {
+        const cal = getCalStore()
+        const y = Math.floor(toNumber(year, cal.gregorian.currentYear))
+        const m = Math.max(1, Math.min(12, Math.floor(toNumber(month, cal.gregorian.currentMonth))))
+        const dim = gregorianDaysInMonth(y, m)
+        const d = Math.max(1, Math.min(dim, Math.floor(toNumber(day, cal.gregorian.currentDay))))
+
+        cal.gregorian.currentYear = y
+        cal.gregorian.currentMonth = m
+        cal.gregorian.currentDay = d
+        calSyncDayFromGregorian(cal)
     }
     
     function calScanNow() {
@@ -1884,6 +2023,24 @@ function cityBuy(rawArg, playerid) {
         showCalMenu(playerid)
     }
     
+    function calSetDateCmd(rawArg, playerid) {
+        if (!canEdit(playerid)) return whisper(playerid, openReport + "<div style='color:#fff;'>Недостаточно прав (нужен ГМ)</div>" + closeReport)
+
+        calCleanupMissingTokens()
+
+        const parts = String(rawArg || '').split('|').map(s => (s || '').trim())
+        const y = parts[0]
+        const m = parts[1]
+        const d = parts[2]
+        if (!y || !m || !d) return showCalMenu(playerid)
+
+        calSetDate(y, m, d)
+
+        calScanNow()
+        calProcessRefreshes()
+        showCalMenu(playerid)
+    }
+
     function calScanCmd(playerid) {
         if (!canEdit(playerid)) return whisper(playerid, openReport + "<div style='color:#fff;'>Недостаточно прав (нужен ГМ)</div>" + closeReport)
     
@@ -1954,18 +2111,30 @@ function cityBuy(rawArg, playerid) {
         const day = cal.day
         const pageName = cal.pageName
         const marker = cal.marker || CAL_MARKER
+        const gy = cal.gregorian.currentYear
+        const gm = cal.gregorian.currentMonth
+        const gd = cal.gregorian.currentDay
+        const wIdx = gregorianWeekdayMon0(gy, gm, gd)
+        const moon = moonPhaseNameByDaySerial(day)
+
+        const dateLabel = weekdayNameRuMon0(wIdx) + ', ' + gd + ' ' + monthNameRu(gm) + ' ' + gy
+        const calTable = renderGregorianCalendarTable(gy, gm, gd)
     
         const top =
             "<div style='text-align:left; color:#fff;'>" +
-            "<div><b>День:</b> " + htmlEscape(day) + "</div>" +
-            "<div style='color:#aaa; font-size:0.9em;'>Страница: " + htmlEscape(pageName) + " | Watch: " + (cal.watch ? "ON" : "OFF") + " | Маркер: " + htmlEscape(marker) + "</div>" +
+            "<div><b>День (служебный):</b> " + htmlEscape(day) + "</div>" +
+            "<div><b>Дата:</b> " + htmlEscape(dateLabel) + "</div>" +
+            "<div><b>Луна:</b> " + htmlEscape(moon.text) + " <span style='color:#888; font-size:0.9em;'>(возраст ~" + htmlEscape(nice2(moon.age)) + " дн.)</span></div>" +
+            "<div style='margin-top:6px;'><b>Календарь: " + htmlEscape(monthNameRu(gm)) + " " + htmlEscape(gy) + "</b>" + calTable + "</div>" +
+            "<div style='color:#aaa; font-size:0.9em; margin-top:6px;'>Страница: " + htmlEscape(pageName) + " | Watch: " + (cal.watch ? "ON" : "OFF") + " | Маркер: " + htmlEscape(marker) + "</div>" +
             "</div>"
     
         const controls =
             "<div style='text-align:left; margin:6px 0;'>" +
             btn('+1 день', "loot-tracker --cal-advance|" + 1, 'Продвинуть день и обработать перезарядки') +
             btn('+7 дней', "loot-tracker --cal-advance|" + 7, 'Продвинуть 7 дней и обработать перезарядки') +
-            btn('Задать день', "loot-tracker --cal-set|?{День|" + day + "}", 'Установить текущий день') +
+            btn('Задать день', "loot-tracker --cal-set|?{День|" + day + "}", 'Установить текущий служебный день') +
+            btn('Задать дату', "loot-tracker --cal-set-date|?{Год|" + gy + "}|?{Месяц 1-12|" + gm + "}|?{День|" + gd + "}", 'Установить григорианскую дату') +
             btn('Скан сейчас', "loot-tracker --cal-scan", 'Скан токенов на странице без продвижения дня') +
             "</div>"
     
@@ -3321,6 +3490,7 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
         'cal': function () { showCalMenu(playerid) },
         'cal-advance': function () { calAdvanceCmd(arg, playerid) },
         'cal-set': function () { calSetCmd(arg, playerid) },
+        'cal-set-date': function () { calSetDateCmd(arg, playerid) },
         'cal-scan': function () { calScanCmd(playerid) },
         'cal-cd-set': function () { calCdSetCmd(arg, playerid) },
         'cal-cd-del': function () { calCdDelCmd(arg, playerid) },
@@ -5747,6 +5917,7 @@ function skipDay(playerid) {
             "<div><b>Добавить в очередь крафта</b>: " + htmlEscape(CMD_ROOT) + " --craft|название|кол-во|ID_исполнителя</div>" +
             "<div><b>Энергия</b>: " + htmlEscape(CMD_ROOT) + " --energy</div>" +
             "<div><b>Отнять день</b>: " + htmlEscape(CMD_ROOT) + " --day</div>" +
+            "<div><b>Календарь (дата)</b>: " + htmlEscape(CMD_ROOT) + " --cal-set-date|год|месяц|день</div>" +
             "<hr style='border:0;border-top:1px solid #555;margin:8px 0'/>" +
             "<div><b>Инвентарь</b>: " + htmlEscape(CMD_ROOT) + " --inventory</div>" +
             "<div><b>Добавить/изменить предмет</b>: " + htmlEscape(CMD_ROOT) + " --takeloot|название|вес_1шт|кол-во</div>" +
