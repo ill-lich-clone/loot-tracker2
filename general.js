@@ -483,6 +483,8 @@
 
     function migrateCities(store) {
         store.cities = store.cities || {}
+        store.traderMemory = store.traderMemory || {}
+        store.traderMemory.profiles = store.traderMemory.profiles || {}
 
         Object.keys(store.cities).forEach(k => {
             const c = store.cities[k]
@@ -499,6 +501,26 @@
             c.generatedDay = toNumber(c.generatedDay, 0)
             c.refreshDay = toNumber(c.refreshDay, 0)
             c.merchants = Array.isArray(c.merchants) ? c.merchants : []
+        })
+
+        Object.keys(store.traderMemory.profiles).forEach(k => {
+            const t = store.traderMemory.profiles[k]
+            if (!t || typeof t !== 'object') {
+                delete store.traderMemory.profiles[k]
+                return
+            }
+
+            t.name = String(t.name || '').trim()
+            t.race = String(t.race || '').trim() || 'Человек'
+            t.tool = String(t.tool || '').trim() || TOOL_LIST[0]
+            t.expiresDay = toNumber(t.expiresDay, 0)
+            t.generatedDay = toNumber(t.generatedDay, 0)
+            t.refreshDay = toNumber(t.refreshDay, 0)
+            t.goods = Array.isArray(t.goods) ? t.goods : []
+
+            if (!t.name) {
+                delete store.traderMemory.profiles[k]
+            }
         })
     }
 
@@ -916,6 +938,303 @@
         }
     }
 
+    function normalizeTraderKey(name) {
+        return String(name || '').trim().toLowerCase().replace(/ё/g, 'е')
+    }
+
+    function inferRaceFromName(name) {
+        const low = normalizeTraderKey(name)
+        if (low.indexOf('орк') >= 0) return 'Орк'
+        if (low.indexOf('эльф') >= 0) return 'Эльф'
+        return 'Человек'
+    }
+
+    function generateSingleTraderGoods(race, tool, day, seed) {
+        const rng = mulberry32(seed)
+        const maxRank = 5
+
+        const fallbackLoot = getFallbackLootCandidates(maxRank)
+        const fallbackMats = getFallbackMaterialCandidates(maxRank)
+
+        const lootCandidates = getLootCandidatesForTool(tool, maxRank)
+        const matCandidates = getMaterialCandidatesForTool(tool, maxRank)
+
+        const lootPick = pickUnique(lootCandidates.length ? lootCandidates : fallbackLoot, 5, rng)
+        const matPick = pickUnique(matCandidates.length ? matCandidates : fallbackMats, 4, rng)
+
+        const goods = []
+
+        const baseRawName = getBaseRawMaterialName(tool)
+        const baseRawBaseMm = parseCostToMm(String(CRAFT_BASE_RAW_UNIT_COST || '1 см').trim())
+        if (isFinite(baseRawBaseMm) && baseRawBaseMm > 0) {
+            const factor = 0.8 + rng() * 0.4
+            const pr = makeTradePrice(baseRawBaseMm, factor)
+
+            goods.push({
+                id: 'base::' + tool,
+                kind: 'baseRaw',
+                name: baseRawName,
+                baseUnitMm: Math.round(baseRawBaseMm),
+                unitMm: Math.max(1, Math.floor(pr.unitMm)),
+                trend: pr.trend,
+                stock: -1,
+                unitKind: 'unit'
+            })
+        }
+
+        lootPick.forEach(itemName => {
+            const info = LOOT_INFO_MAP[itemName] || {}
+            const baseMm = parseCostToMm(String(info.cost || '').trim())
+            if (!isFinite(baseMm) || baseMm <= 0) return
+
+            const factor = 0.8 + rng() * 0.4
+            const pr = makeTradePrice(baseMm, factor)
+
+            goods.push({
+                id: 'item::' + itemName,
+                kind: 'item',
+                name: itemName,
+                baseUnitMm: Math.round(baseMm),
+                unitMm: Math.max(1, Math.floor(pr.unitMm)),
+                trend: pr.trend,
+                stock: randInt(rng, 10, 20)
+            })
+        })
+
+        matPick.forEach(matName => {
+            const baseGpPerLb = getMaterialCostPerLbGp(matName)
+            const baseMmPerLb = Math.round(baseGpPerLb * 100)
+            if (!isFinite(baseMmPerLb) || baseMmPerLb <= 0) return
+
+            const factor = 0.8 + rng() * 0.4
+            const pr = makeTradePrice(baseMmPerLb, factor)
+
+            goods.push({
+                id: 'mat::' + matName,
+                kind: 'material',
+                name: matName,
+                baseUnitMm: Math.round(baseMmPerLb),
+                unitMm: Math.max(1, Math.floor(pr.unitMm)),
+                trend: pr.trend,
+                stock: randInt(rng, 10, 20)
+            })
+        })
+
+        return goods
+    }
+
+    function rememberTraderProfile(name, race, tool, day) {
+        const nm = String(name || '').trim()
+        if (!nm) return
+
+        const store = getStore()
+        const key = normalizeTraderKey(nm)
+        const existing = store.traderMemory.profiles[key] || {}
+
+        const prof = String(tool || '').trim() || existing.tool || TOOL_LIST[0]
+        const rc = String(race || '').trim() || existing.race || inferRaceFromName(nm)
+
+        store.traderMemory.profiles[key] = {
+            name: nm,
+            race: rc,
+            tool: prof,
+            expiresDay: Math.max(day + 30, toNumber(existing.expiresDay, 0)),
+            generatedDay: toNumber(existing.generatedDay, 0),
+            refreshDay: toNumber(existing.refreshDay, 0),
+            goods: Array.isArray(existing.goods) ? existing.goods : []
+        }
+    }
+
+    function getOrCreateRememberedTrader(rawName, day) {
+        const store = getStore()
+        const nameArg = String(rawName || '').trim()
+        const defaultName = 'Странствующий торговец'
+        const nm = nameArg || defaultName
+        const key = normalizeTraderKey(nm)
+
+        let rec = store.traderMemory.profiles[key]
+        if (!rec || toNumber(rec.expiresDay, 0) < day) {
+            const race = rec && rec.race ? rec.race : inferRaceFromName(nm)
+            const seed = hash32('memory-trader|' + key + '|' + day)
+            const rng = mulberry32(seed)
+            const tool = rec && rec.tool ? rec.tool : TOOL_LIST[randInt(rng, 0, TOOL_LIST.length - 1)]
+
+            rec = {
+                name: nm,
+                race: race,
+                tool: tool,
+                expiresDay: day + 30,
+                generatedDay: 0,
+                refreshDay: 0,
+                goods: []
+            }
+            store.traderMemory.profiles[key] = rec
+        }
+
+        if (!Array.isArray(rec.goods) || !rec.goods.length || day >= toNumber(rec.refreshDay, 0)) {
+            const seed = hash32('memory-trader-goods|' + key + '|' + day)
+            rec.goods = generateSingleTraderGoods(rec.race, rec.tool, day, seed)
+            rec.generatedDay = day
+            rec.refreshDay = day + 30
+        }
+
+        rec.expiresDay = Math.max(toNumber(rec.expiresDay, day + 30), day + 30)
+        return rec
+    }
+
+    function showRememberedTrader(rawArg, playerid) {
+        const editable = canEdit(playerid)
+        const cal = getCalStore()
+        const day = toNumber(cal.day, 1)
+
+        const trader = getOrCreateRememberedTrader(rawArg, day)
+        if (!trader) return whisper(playerid, openReport + "<div style='color:#fff;'>Не удалось загрузить торговца</div>" + closeReport)
+
+        const m = {
+            id: 'memory',
+            name: trader.name,
+            race: trader.race,
+            tool: trader.tool,
+            goods: trader.goods
+        }
+
+        const prof = toolToProfession(m.tool)
+
+        const rows = (m.goods || []).map(g => {
+            const stockRaw = toNumber(g.stock, 0)
+            const stock = Math.floor(stockRaw)
+
+            const unitMm = Math.floor(toNumber(g.unitMm, 0))
+            const tr = String(g.trend || 'flat')
+
+            const priceHtml =
+                "<span style='color:" + trendColor(tr) + "; font-weight:bold;'>" +
+                htmlEscape(mmToTradeText(unitMm)) + " " + trendArrow(tr) +
+                "</span>"
+
+            let stockTxt = ''
+            let qtyPrompt = 'Сколько купить?'
+            let unitTxt = ''
+
+            if (g.kind === 'baseRaw') {
+                stockTxt = '∞'
+                qtyPrompt = 'Сколько купить (ед.)?'
+                unitTxt = "<span style='color:#aaa;'>/ед.</span>"
+            } else if (g.kind === 'material') {
+                stockTxt = stock + ' шт'
+                qtyPrompt = 'Сколько купить (фнт)?'
+                unitTxt = "<span style='color:#aaa;'>/фнт</span>"
+            } else {
+                stockTxt = stock + ' шт'
+                qtyPrompt = 'Сколько купить (шт)?'
+            }
+
+            const buyCmd = 'loot-tracker --memtrader-buy|' + encArg(normalizeTraderKey(m.name)) + '|' + encArg(g.id) + '|?{' + qtyPrompt + '|1}'
+            const infoCmd = 'loot-tracker --memtrader-info|' + encArg(normalizeTraderKey(m.name)) + '|' + encArg(g.id)
+
+            const buyBtn = editable ? btn('Купить', buyCmd, 'Купить у торговца') : ''
+            const infoBtn = btn('❓', infoCmd, 'Информация о товаре')
+            const icon = (g.kind === 'material' || g.kind === 'baseRaw') ? '🧱' : '📦'
+
+            return "<tr>" +
+                "<td style='padding:2px 6px; vertical-align:top;'><div>" + icon + " " + htmlEscape(g.name) + "</div><div style='color:#aaa; font-size:0.9em; margin-top:1px;'>Запас: " + htmlEscape(stockTxt) + "</div></td>" +
+                "<td style='padding:2px 6px; vertical-align:top; text-align:right; white-space:nowrap;'>" + priceHtml + unitTxt + "<div style='margin-top:2px;'>" + infoBtn + (buyBtn ? buyBtn : '') + "</div></td>" +
+            "</tr>"
+        }).join('')
+
+        whisper(playerid,
+            openReport +
+            openHeader + 'Запомненный торговец' + closeHeader +
+            "<div style='text-align:left; color:#fff;'>" +
+            "<div><b>" + htmlEscape(m.name) + "</b> — <span style='color:#aaa;'>" + htmlEscape(prof) + "</span></div>" +
+            "<div style='margin-top:4px; color:#ccc;'>Народ: " + htmlEscape(m.race) + " · Память до дня " + htmlEscape(trader.expiresDay) + " · Обновление товаров: день " + htmlEscape(trader.refreshDay) + "</div>" +
+            "<div style='margin-top:8px;'><table style='width:100%; border-collapse:collapse;'><tr style='color:#aaa; border-bottom:1px solid #333;'><th style='text-align:left; padding:2px 6px;'>Товар</th><th style='text-align:left; padding:2px 6px;'>Цена</th></tr>" + rows + "</table></div>" +
+            "<div style='margin-top:8px;'>" + renderNav(['cities', 'menu', 'inventory', 'materials', 'craft', 'craftQueue'], editable, 'left') + "</div>" +
+            "</div>" +
+            closeReport
+        )
+    }
+
+    function memTraderBuy(rawArg, playerid) {
+        const editable = canEdit(playerid)
+        if (!editable) return whisper(playerid, 'Нет прав.')
+
+        const parts = String(rawArg || '').split('|').map(s => (s || '').trim())
+        const traderKey = decArg(parts[0] || '')
+        const goodId = decArg(parts[1] || '')
+        const qty = Math.max(1, Math.floor(toNumber(parts[2], 1)))
+
+        const store = getStore()
+        const cal = getCalStore()
+        const day = toNumber(cal.day, 1)
+
+        const trader = getOrCreateRememberedTrader(traderKey, day)
+        if (!trader) return showRememberedTrader(traderKey, playerid)
+
+        const g = (trader.goods || []).find(x => String(x.id) === String(goodId))
+        if (!g) return showRememberedTrader(traderKey, playerid)
+
+        const stockRaw = toNumber(g.stock, 0)
+        const stock = Math.floor(stockRaw)
+        if (stock >= 0 && qty > stock) return showRememberedTrader(traderKey, playerid)
+
+        const unitMm = Math.max(1, Math.floor(toNumber(g.unitMm, 0)))
+        const totalMm = unitMm * qty
+
+        const haveMm = coinsToMmTotal(store.coins || {})
+        if (haveMm < totalMm) return showRememberedTrader(traderKey, playerid)
+
+        store.coins = mmToCoins(haveMm - totalMm)
+        if (stock >= 0) g.stock = Math.max(0, stock - qty)
+
+        if (g.kind === 'material') {
+            invAddQtySilent(normalizeMaterialName(g.name), qty, 1)
+        } else if (g.kind === 'baseRaw') {
+            const lb = qty * toNumber(CRAFT_BASE_RAW_UNIT_WEIGHT_LB, 0.1)
+            invAddQtySilent(normalizeMaterialName(g.name), lb, 1)
+        } else {
+            const unitW = parseWeightFromInfo(g.name)
+            invAddQtySilent(g.name, qty, unitW)
+        }
+
+        showRememberedTrader(traderKey, playerid)
+    }
+
+    function showMemTraderGoodInfo(rawArg, playerid) {
+        const parts = String(rawArg || '').split('|').map(s => (s || '').trim())
+        const traderKey = decArg(parts[0] || '')
+        const goodId = decArg(parts[1] || '')
+
+        const cal = getCalStore()
+        const day = toNumber(cal.day, 1)
+        const trader = getOrCreateRememberedTrader(traderKey, day)
+        if (!trader) return showRememberedTrader(traderKey, playerid)
+
+        const g = (trader.goods || []).find(x => String(x.id) === String(goodId))
+        if (!g) return showRememberedTrader(traderKey, playerid)
+
+        if (g.kind === 'material') {
+            showMaterialInfo(stripMaterialSuffix(g.name), playerid)
+            return
+        }
+
+        if (g.kind === 'baseRaw') {
+            whisper(playerid,
+                openReport +
+                openHeader + htmlEscape(g.name) + closeHeader +
+                "<div style='text-align:left; color:#fff;'>" +
+                "<div><b>Тип:</b> Базовое сырьё</div>" +
+                "<div><b>Цена:</b> " + htmlEscape(mmToTradeText(g.unitMm)) + " за ед.</div>" +
+                "<div><b>Вес:</b> " + htmlEscape(CRAFT_BASE_RAW_UNIT_WEIGHT_LB) + " фнт за ед.</div>" +
+                "</div>" +
+                closeReport
+            )
+            return
+        }
+
+        showSingleItemInfo(g.name, playerid)
+    }
+
 
     function showCitiesWindow(playerid) {
         const editable = canEdit(playerid)
@@ -1112,6 +1431,7 @@
         }
 
         const prof = toolToProfession(m.tool)
+        rememberTraderProfile(m.name, m.race || market.race, m.tool, day)
 
                 const rows = (m.goods || []).map(g => {
             const stockRaw = toNumber(g.stock, 0)
@@ -2230,7 +2550,52 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
         const store = getStore()
         store.lootgen = store.lootgen || {}
         store.lootgen.items = store.lootgen.items || {} // name -> { qty, value, unitWeight }
+        store.lootgen.coins = store.lootgen.coins || { pm: 0, zm: 0, sm: 0, mm: 0 }
         return store.lootgen
+    }
+
+    function lootgenCoinModeEnabled(raw) {
+        const mode = String(raw || 'нет').trim().toLowerCase()
+        return (mode === 'да' || mode === 'yes' || mode === '1' || mode === 'true')
+    }
+
+    function splitMmToBalancedCoins(totalMm) {
+        let mm = Math.max(0, Math.floor(toNumber(totalMm, 0)))
+        const out = { pm: 0, zm: 0, sm: 0, mm: 0 }
+        if (mm <= 0) return out
+
+        const pmMax = Math.floor(mm / 1000)
+        out.pm = pmMax > 0 ? randomInteger(pmMax + 1) - 1 : 0
+        mm -= out.pm * 1000
+
+        const zmMax = Math.floor(mm / 100)
+        out.zm = zmMax > 0 ? randomInteger(zmMax + 1) - 1 : 0
+        mm -= out.zm * 100
+
+        const smMax = Math.floor(mm / 10)
+        out.sm = smMax > 0 ? randomInteger(smMax + 1) - 1 : 0
+        mm -= out.sm * 10
+
+        out.mm = mm
+        return out
+    }
+
+    function lootgenTakeCoins(playerid) {
+        if (!canEdit(playerid)) {
+            return whisper(playerid, openReport + "<div style='color:#fff;'>Недостаточно прав (нужен ГМ)</div>" + closeReport)
+        }
+
+        const lg = getLootGenStore()
+        const c = lg.coins || { pm: 0, zm: 0, sm: 0, mm: 0 }
+        const addMm = coinsToMm(c)
+        if (addMm <= 0) return renderLootGenToChat()
+
+        const store = getStore()
+        const curMm = coinsToMm(store.coins || {})
+        store.coins = mmToCoins(curMm + addMm)
+        lg.coins = { pm: 0, zm: 0, sm: 0, mm: 0 }
+
+        renderLootGenToChat(["• Монеты: " + htmlEscape(coinsToText(c))])
     }
 
     function lootgenClear(playerid) {
@@ -2240,6 +2605,7 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
 
         const lg = getLootGenStore()
         lg.items = {}
+        lg.coins = { pm: 0, zm: 0, sm: 0, mm: 0 }
         renderLootGenToChat()
     }
 
@@ -2421,7 +2787,16 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
         const topBtns =
             "<div style='text-align:left; margin:6px 0;'>" +
             btn('⬇ Всё в инвентарь', 'loot-tracker --lootgen-take-all', 'Перенести весь сгенерированный лут в групповой инвентарь') +
+            btn('🪙 Забрать монеты', 'loot-tracker --lootgen-take-coins', 'Забрать только сгенерированные монеты') +
             btn('🧹 Очистить', 'loot-tracker --lootgen-clear', 'Очистить ТОЛЬКО список сгенерированного лута (инвентарь не трогается)') +
+            "</div>"
+
+        const coinsRec = lg.coins || { pm: 0, zm: 0, sm: 0, mm: 0 }
+        const coinsMm = coinsToMm(coinsRec)
+        const coinsBlock =
+            "<div style='text-align:left; margin:4px 0 8px 0; color:#ccc;'>" +
+            "Монеты: <b style='color:#fff;'>" + htmlEscape(coinsToText(coinsRec)) + "</b>" +
+            (coinsMm > 0 ? " <span style='color:#777;'>(" + htmlEscape(mmToTradeText(coinsMm)) + ")</span>" : "") +
             "</div>"
 
         const receiptBlock = (receiptLines && receiptLines.length)
@@ -2474,6 +2849,7 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
             capBlock +
             receiptBlock +
             topBtns +
+            coinsBlock +
             body +
             closeReport
 
@@ -2510,7 +2886,9 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
 
         const lg = getLootGenStore()
         const names = Object.keys(lg.items || {})
-        if (!names.length) return renderLootGenToChat()
+        const coinsRec = lg.coins || { pm: 0, zm: 0, sm: 0, mm: 0 }
+        const hasCoins = coinsToMm(coinsRec) > 0
+        if (!names.length && !hasCoins) return renderLootGenToChat()
 
         const receipt = []
         names.sort((a, b) => a.localeCompare(b, 'ru'))
@@ -2524,7 +2902,16 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
             }
         })
 
+        const addMm = coinsToMm(coinsRec)
+        if (addMm > 0) {
+            const store = getStore()
+            const curMm = coinsToMm(store.coins || {})
+            store.coins = mmToCoins(curMm + addMm)
+            receipt.push("• Монеты: " + htmlEscape(coinsToText(coinsRec)))
+        }
+
         lg.items = {}
+        lg.coins = { pm: 0, zm: 0, sm: 0, mm: 0 }
 
         renderLootGenToChat(receipt)
     }
@@ -2534,12 +2921,13 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
             return whisper(playerid, openReport + "<div style='color:#fff;'>Недостаточно прав (нужен ГМ)</div>" + closeReport)
         }
 
-        // формат: value|types|magic|maxSlots
+        // формат: value|types|magic|maxSlots|coins
         const parts = String(rawArg || '').split('|').map(s => (s || '').trim())
         const targetValue = Math.max(0, Math.floor(toNumber(parts[0], 0)))
         const typesList = parseTypesList(parts[1])
         const magicMode = parts[2] || 'нет'
         const maxSlotsRaw = parts[3]
+        const coinsMode = parts[4] || 'нет'
         const maxSlots = (maxSlotsRaw === undefined || maxSlotsRaw === '')
             ? 9999
             : Math.max(1, Math.floor(toNumber(maxSlotsRaw, 9999)))
@@ -2548,6 +2936,7 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
 
         const lg = getLootGenStore()
         lg.items = {}
+        lg.coins = lootgenCoinModeEnabled(coinsMode) ? splitMmToBalancedCoins(targetValue) : { pm: 0, zm: 0, sm: 0, mm: 0 }
 
         if (targetValue <= 0 || !candidates.length) {
             return renderLootGenToChat()
@@ -2898,6 +3287,9 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
         'city-merchant': function () { showCityMerchantWindow(arg, playerid) },
         'city-buy': function () { cityBuy(arg, playerid) },
         'city-info': function () { showCityGoodInfoWindow(arg, playerid) },
+        'show-trader': function () { showRememberedTrader(arg, playerid) },
+        'memtrader-buy': function () { memTraderBuy(arg, playerid) },
+        'memtrader-info': function () { showMemTraderGoodInfo(arg, playerid) },
 
         'menu': function () { showGroupMenu(playerid) },
         'party': function () { showPartyWindow(playerid) },
@@ -2939,7 +3331,8 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
         'lootgen-take': function () { lootgenTakeOne(arg, playerid) },
         'lootgen-take-type': function () { lootgenTakeType(arg, playerid) },
         'lootgen-take-all': function () { lootgenTakeAll(playerid) },
-        'lootgen-clear': function () { lootgenClear(playerid) }
+        'lootgen-clear': function () { lootgenClear(playerid) },
+        'lootgen-take-coins': function () { lootgenTakeCoins(playerid) }
     }
 
     
@@ -5366,8 +5759,9 @@ function skipDay(playerid) {
             "<div><b>Восстановить энергию едой</b>: " + htmlEscape(CMD_ROOT) + " --energy-eat|ID|1</div>" +
             "<div><b>Задать энергию вручную</b>: " + htmlEscape(CMD_ROOT) + " --energy-set|ID|cur|max</div>" +
             "<div><b>Задать мод Телосложения вручную</b>: " + htmlEscape(CMD_ROOT) + " --energy-con|ID|mod</div>" +
-            "<div><b>Генератор лута</b>: " + htmlEscape(CMD_ROOT) + " --lootgen-generate|value|типы|магия|слоты</div>" +
-            "<div style='color:#aaa; font-size:0.9em;'>Пример: --lootgen-generate|200|общее,ремесло|нет|5</div>" +
+            "<div><b>Генератор лута</b>: " + htmlEscape(CMD_ROOT) + " --lootgen-generate|value|типы|магия|слоты|монеты</div>" +
+            "<div style='color:#aaa; font-size:0.9em;'>Пример: --lootgen-generate|200|общее,ремесло|нет|5|да</div>" +
+            "<div><b>Запомненный торговец</b>: " + htmlEscape(CMD_ROOT) + " --show-trader|имя</div>" +
             "</div>" +
             closeReport
 
