@@ -1735,12 +1735,14 @@ function cityBuy(rawArg, playerid) {
         store.cal.gregorian.currentDay = Math.max(1, Math.floor(toNumber(store.cal.gregorian.currentDay, 1)))
 
         if (store.cal.gregorian.mode !== 'gregorian') {
+          
             calSyncGregorianFromDay(store.cal)
             store.cal.gregorian.mode = 'gregorian'
         } else {
             calSyncDayFromGregorian(store.cal)
             calSyncGregorianFromDay(store.cal)
         }
+        main
     
         store.cal.pageName = store.cal.pageName || CAL_DEFAULT_PAGE_NAME
         store.cal.marker = store.cal.marker || CAL_MARKER
@@ -2027,12 +2029,38 @@ function cityBuy(rawArg, playerid) {
         if (!canEdit(playerid)) return whisper(playerid, openReport + "<div style='color:#fff;'>Недостаточно прав (нужен ГМ)</div>" + closeReport)
 
         calCleanupMissingTokens()
+        const src = String(rawArg || '').trim()
+        const parts = src.split('|').map(s => (s || '').trim()).filter(Boolean)
+
+        // Надёжный парсинг: сначала ожидаемый формат год|месяц|день,
+        // затем fallback — первые 3 целых числа из строки.
+        let y = parts[0]
+        let m = parts[1]
+        let d = parts[2]
+
+        if (!y || !m || !d) {
+            const nums = src.match(/-?\d+/g) || []
+            y = nums[0]
+            m = nums[1]
+            d = nums[2]
+        }
+
+        if (!y || !m || !d) {
+            whisper(playerid,
+                openReport +
+                openHeader + 'Неверный формат даты' + closeHeader +
+                "<div style='text-align:left; color:#fff;'>Используй: <b>--cal-set-date|год|месяц|день</b></div>" +
+                closeReport
+            )
+            return showCalMenu(playerid)
+        }
 
         const parts = String(rawArg || '').split('|').map(s => (s || '').trim())
         const y = parts[0]
         const m = parts[1]
         const d = parts[2]
         if (!y || !m || !d) return showCalMenu(playerid)
+
 
         calSetDate(y, m, d)
 
