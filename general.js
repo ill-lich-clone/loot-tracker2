@@ -2934,9 +2934,11 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
 
         const candidates = filterCandidatesByParams(typesList, magicMode)
 
+        const coinTargetMm = targetValue * 10 // value приходит в см, конвертируем в мм
+
         const lg = getLootGenStore()
         lg.items = {}
-        lg.coins = lootgenCoinModeEnabled(coinsMode) ? splitMmToBalancedCoins(targetValue) : { pm: 0, zm: 0, sm: 0, mm: 0 }
+        lg.coins = lootgenCoinModeEnabled(coinsMode) ? splitMmToBalancedCoins(coinTargetMm) : { pm: 0, zm: 0, sm: 0, mm: 0 }
 
         if (targetValue <= 0 || !candidates.length) {
             return renderLootGenToChat()
