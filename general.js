@@ -1735,11 +1735,12 @@ function cityBuy(rawArg, playerid) {
         store.cal.gregorian.currentDay = Math.max(1, Math.floor(toNumber(store.cal.gregorian.currentDay, 1)))
 
         if (store.cal.gregorian.mode !== 'gregorian') {
+            calSyncGregorianFromDay(store.cal)
             store.cal.gregorian.mode = 'gregorian'
+        } else {
+            calSyncDayFromGregorian(store.cal)
+            calSyncGregorianFromDay(store.cal)
         }
-        // day остаётся источником правды для совместимости старой логики CD,
-        // а григорианская дата — его отображение в UI.
-        calSyncGregorianFromDay(store.cal)
     
         store.cal.pageName = store.cal.pageName || CAL_DEFAULT_PAGE_NAME
         store.cal.marker = store.cal.marker || CAL_MARKER
@@ -2026,7 +2027,6 @@ function cityBuy(rawArg, playerid) {
         if (!canEdit(playerid)) return whisper(playerid, openReport + "<div style='color:#fff;'>Недостаточно прав (нужен ГМ)</div>" + closeReport)
 
         calCleanupMissingTokens()
-
         const src = String(rawArg || '').trim()
         const dateParts = src.split('|').map(s => (s || '').trim()).filter(Boolean)
 
@@ -2052,7 +2052,11 @@ function cityBuy(rawArg, playerid) {
             )
             return showCalMenu(playerid)
         }
-
+        const parts = String(rawArg || '').split('|').map(s => (s || '').trim())
+        const y = parts[0]
+        const m = parts[1]
+        const d = parts[2]
+        if (!y || !m || !d) return showCalMenu(playerid)
         calSetDate(y, m, d)
 
         calScanNow()
@@ -2170,17 +2174,21 @@ function cityBuy(rawArg, playerid) {
         const day = cal.day
         const pageName = cal.pageName
         const marker = cal.marker || CAL_MARKER
-        const panel = renderCalDatePanel(cal)
-        const gy = panel.year
-        const gm = panel.month
-        const gd = panel.day
+        const gy = cal.gregorian.currentYear
+        const gm = cal.gregorian.currentMonth
+        const gd = cal.gregorian.currentDay
+        const wIdx = gregorianWeekdayMon0(gy, gm, gd)
+        const moon = moonPhaseNameByDaySerial(day)
+
+        const dateLabel = weekdayNameRuMon0(wIdx) + ', ' + gd + ' ' + monthNameRu(gm) + ' ' + gy
+        const calTable = renderGregorianCalendarTable(gy, gm, gd)
     
         const top =
             "<div style='text-align:left; color:#fff;'>" +
             "<div><b>День (служебный):</b> " + htmlEscape(day) + "</div>" +
-            "<div><b>Дата:</b> " + htmlEscape(panel.dateLabel) + "</div>" +
-            "<div><b>Луна:</b> " + htmlEscape(panel.moonText) + " <span style='color:#888; font-size:0.9em;'>(возраст ~" + htmlEscape(nice2(panel.moonAge)) + " дн.)</span></div>" +
-            "<div style='margin-top:6px;'><b>Календарь: " + htmlEscape(monthNameRu(gm)) + " " + htmlEscape(gy) + "</b>" + panel.tableHtml + "</div>" +
+            "<div><b>Дата:</b> " + htmlEscape(dateLabel) + "</div>" +
+            "<div><b>Луна:</b> " + htmlEscape(moon.text) + " <span style='color:#888; font-size:0.9em;'>(возраст ~" + htmlEscape(nice2(moon.age)) + " дн.)</span></div>" +
+            "<div style='margin-top:6px;'><b>Календарь: " + htmlEscape(monthNameRu(gm)) + " " + htmlEscape(gy) + "</b>" + calTable + "</div>" +
             "<div style='color:#aaa; font-size:0.9em; margin-top:6px;'>Страница: " + htmlEscape(pageName) + " | Watch: " + (cal.watch ? "ON" : "OFF") + " | Маркер: " + htmlEscape(marker) + "</div>" +
             "</div>"
     
