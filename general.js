@@ -1735,14 +1735,12 @@ function cityBuy(rawArg, playerid) {
         store.cal.gregorian.currentDay = Math.max(1, Math.floor(toNumber(store.cal.gregorian.currentDay, 1)))
 
         if (store.cal.gregorian.mode !== 'gregorian') {
-          
             calSyncGregorianFromDay(store.cal)
             store.cal.gregorian.mode = 'gregorian'
         } else {
             calSyncDayFromGregorian(store.cal)
             calSyncGregorianFromDay(store.cal)
         }
-        main
     
         store.cal.pageName = store.cal.pageName || CAL_DEFAULT_PAGE_NAME
         store.cal.marker = store.cal.marker || CAL_MARKER
@@ -2030,13 +2028,13 @@ function cityBuy(rawArg, playerid) {
 
         calCleanupMissingTokens()
         const src = String(rawArg || '').trim()
-        const parts = src.split('|').map(s => (s || '').trim()).filter(Boolean)
+        const dateParts = src.split('|').map(s => (s || '').trim()).filter(Boolean)
 
         // Надёжный парсинг: сначала ожидаемый формат год|месяц|день,
         // затем fallback — первые 3 целых числа из строки.
-        let y = parts[0]
-        let m = parts[1]
-        let d = parts[2]
+        let y = dateParts[0]
+        let m = dateParts[1]
+        let d = dateParts[2]
 
         if (!y || !m || !d) {
             const nums = src.match(/-?\d+/g) || []
@@ -2054,14 +2052,11 @@ function cityBuy(rawArg, playerid) {
             )
             return showCalMenu(playerid)
         }
-
         const parts = String(rawArg || '').split('|').map(s => (s || '').trim())
         const y = parts[0]
         const m = parts[1]
         const d = parts[2]
         if (!y || !m || !d) return showCalMenu(playerid)
-
-
         calSetDate(y, m, d)
 
         calScanNow()
@@ -2083,9 +2078,9 @@ function cityBuy(rawArg, playerid) {
         if (!canEdit(playerid)) return whisper(playerid, openReport + "<div style='color:#fff;'>Недостаточно прав (нужен ГМ)</div>" + closeReport)
     
         const cal = getCalStore()
-        const parts = String(rawArg || '').split('|').map(s => (s || '').trim())
-        const name = parts[0] || ''
-        const days = toNumber(parts[1], NaN)
+        const cdParts = String(rawArg || '').split('|').map(s => (s || '').trim())
+        const name = cdParts[0] || ''
+        const days = toNumber(cdParts[1], NaN)
     
         if (!name || isNaN(days) || days < 0) return showCalMenu(playerid)
     
@@ -2133,6 +2128,46 @@ function cityBuy(rawArg, playerid) {
         showCalMenu(playerid)
     }
     
+    function renderCalDatePanel(cal) {
+        const day = cal.day
+        const gy = cal.gregorian.currentYear
+        const gm = cal.gregorian.currentMonth
+        const gd = cal.gregorian.currentDay
+        const wIdx = gregorianWeekdayMon0(gy, gm, gd)
+        const moon = moonPhaseNameByDaySerial(day)
+
+        const dateLabel = weekdayNameRuMon0(wIdx) + ', ' + gd + ' ' + monthNameRu(gm) + ' ' + gy
+        const calTable = renderGregorianCalendarTable(gy, gm, gd)
+
+        return {
+            dateLabel: dateLabel,
+            moonText: moon.text,
+            moonAge: moon.age,
+            tableHtml: calTable,
+            year: gy,
+            month: gm,
+            day: gd
+        }
+    }
+
+    function showCalTodayWindow(playerid) {
+        const cal = getCalStore()
+        const panel = renderCalDatePanel(cal)
+
+        const html =
+            openReport +
+            openHeader + 'Сегодняшняя дата' + closeHeader +
+            "<div style='text-align:left; color:#fff;'>" +
+            "<div><b>Дата:</b> " + htmlEscape(panel.dateLabel) + "</div>" +
+            "<div><b>Луна:</b> " + htmlEscape(panel.moonText) + " <span style='color:#888; font-size:0.9em;'>(возраст ~" + htmlEscape(nice2(panel.moonAge)) + " дн.)</span></div>" +
+            "<div style='margin-top:6px;'><b>Календарь: " + htmlEscape(monthNameRu(panel.month)) + " " + htmlEscape(panel.year) + "</b>" + panel.tableHtml + "</div>" +
+            "<div style='margin-top:8px;'>" + renderNav(['cal', 'menu', 'inventory', 'party', 'energy'], canEdit(playerid), 'left') + "</div>" +
+            "</div>" +
+            closeReport
+
+        whisper(playerid, html)
+    }
+
     function showCalMenu(playerid) {
         const cal = getCalStore()
     
@@ -2164,6 +2199,7 @@ function cityBuy(rawArg, playerid) {
             btn('Задать день', "loot-tracker --cal-set|?{День|" + day + "}", 'Установить текущий служебный день') +
             btn('Задать дату', "loot-tracker --cal-set-date|?{Год|" + gy + "}|?{Месяц 1-12|" + gm + "}|?{День|" + gd + "}", 'Установить григорианскую дату') +
             btn('Скан сейчас', "loot-tracker --cal-scan", 'Скан токенов на странице без продвижения дня') +
+            btn('Сегодня', "loot-tracker --cal-today", 'Показать текущую дату красивой карточкой') +
             "</div>"
     
         const cdHelp =
@@ -3519,6 +3555,7 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
         'cal-advance': function () { calAdvanceCmd(arg, playerid) },
         'cal-set': function () { calSetCmd(arg, playerid) },
         'cal-set-date': function () { calSetDateCmd(arg, playerid) },
+        'cal-today': function () { showCalTodayWindow(playerid) },
         'cal-scan': function () { calScanCmd(playerid) },
         'cal-cd-set': function () { calCdSetCmd(arg, playerid) },
         'cal-cd-del': function () { calCdDelCmd(arg, playerid) },
@@ -5946,6 +5983,7 @@ function skipDay(playerid) {
             "<div><b>Энергия</b>: " + htmlEscape(CMD_ROOT) + " --energy</div>" +
             "<div><b>Отнять день</b>: " + htmlEscape(CMD_ROOT) + " --day</div>" +
             "<div><b>Календарь (дата)</b>: " + htmlEscape(CMD_ROOT) + " --cal-set-date|год|месяц|день</div>" +
+            "<div><b>Сегодня (карточка)</b>: " + htmlEscape(CMD_ROOT) + " --cal-today</div>" +
             "<hr style='border:0;border-top:1px solid #555;margin:8px 0'/>" +
             "<div><b>Инвентарь</b>: " + htmlEscape(CMD_ROOT) + " --inventory</div>" +
             "<div><b>Добавить/изменить предмет</b>: " + htmlEscape(CMD_ROOT) + " --takeloot|название|вес_1шт|кол-во</div>" +
