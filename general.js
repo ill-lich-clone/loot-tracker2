@@ -2024,24 +2024,44 @@ function cityBuy(rawArg, playerid) {
     }
     
     function calSetDateCmd(rawArg, playerid) {
-        if (!canEdit(playerid)) return whisper(playerid, openReport + "<div style='color:#fff;'>Недостаточно прав (нужен ГМ)</div>" + closeReport)
-
+        if (!canEdit(playerid)) {
+            return whisper(playerid, openReport + "<div style='color:#fff;'>Недостаточно прав (нужен ГМ)</div>" + closeReport)
+        }
+    
         calCleanupMissingTokens()
+    
         const src = String(rawArg || '').trim()
         const dateParts = src.split('|').map(s => (s || '').trim()).filter(Boolean)
-
+    
         // Надёжный парсинг: сначала ожидаемый формат год|месяц|день,
         // затем fallback — первые 3 целых числа из строки.
         let y = dateParts[0]
         let m = dateParts[1]
         let d = dateParts[2]
-
+    
         if (!y || !m || !d) {
             const nums = src.match(/-?\d+/g) || []
             y = nums[0]
             m = nums[1]
             d = nums[2]
         }
+    
+        if (!y || !m || !d) {
+            whisper(playerid,
+                openReport +
+                openHeader + 'Неверный формат даты' + closeHeader +
+                "<div style='text-align:left; color:#fff;'>Используй: <b>--cal-set-date|год|месяц|день</b></div>" +
+                closeReport
+            )
+            return showCalMenu(playerid)
+        }
+    
+        calSetDate(y, m, d)
+    
+        calScanNow()
+        calProcessRefreshes()
+        showCalMenu(playerid)
+}
 
         if (!y || !m || !d) {
             whisper(playerid,
