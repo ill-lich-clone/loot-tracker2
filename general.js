@@ -1912,15 +1912,27 @@ function cityBuy(rawArg, playerid) {
 
     function calSetDate(year, month, day) {
         const cal = getCalStore()
+    
         const y = Math.floor(toNumber(year, cal.gregorian.currentYear))
         const m = Math.max(1, Math.min(12, Math.floor(toNumber(month, cal.gregorian.currentMonth))))
         const dim = gregorianDaysInMonth(y, m)
         const d = Math.max(1, Math.min(dim, Math.floor(toNumber(day, cal.gregorian.currentDay))))
-
-        cal.gregorian.currentYear = y
-        cal.gregorian.currentMonth = m
-        cal.gregorian.currentDay = d
-        calSyncDayFromGregorian(cal)
+    
+        // Хотим: на текущем служебном дне cal.day показывать (y, m, d)
+        const targetMs = Date.UTC(y, m - 1, d)
+    
+        const dayNum = Math.max(1, Math.floor(toNumber(cal.day, 1)))
+        const epochMs = targetMs - (dayNum - 1) * 86400000
+    
+        const ep = new Date(epochMs)
+        cal.gregorian.epoch = {
+            year: ep.getUTCFullYear(),
+            month: ep.getUTCMonth() + 1,
+            day: ep.getUTCDate()
+        }
+    
+        // Синхронизируем отображаемую дату из day+epoch
+        calSyncGregorianFromDay(cal)
     }
     
     function calScanNow() {
@@ -2050,7 +2062,7 @@ function cityBuy(rawArg, playerid) {
             whisper(playerid,
                 openReport +
                 openHeader + 'Неверный формат даты' + closeHeader +
-                "<div style='text-align:left; color:#fff;'>Используй: <b>--cal-set-date|год|месяц|день</b></div>" +
+                "<div style='text-align:left; color:#fff;'>Используй: <b>--set-date|год|месяц|день</b></div>" +
                 closeReport
             )
             return showCalMenu(playerid)
@@ -2058,27 +2070,6 @@ function cityBuy(rawArg, playerid) {
     
         calSetDate(y, m, d)
     
-        calScanNow()
-        calProcessRefreshes()
-        showCalMenu(playerid)
-}
-
-        if (!y || !m || !d) {
-            whisper(playerid,
-                openReport +
-                openHeader + 'Неверный формат даты' + closeHeader +
-                "<div style='text-align:left; color:#fff;'>Используй: <b>--cal-set-date|год|месяц|день</b></div>" +
-                closeReport
-            )
-            return showCalMenu(playerid)
-        }
-        const parts = String(rawArg || '').split('|').map(s => (s || '').trim())
-        const y = parts[0]
-        const m = parts[1]
-        const d = parts[2]
-        if (!y || !m || !d) return showCalMenu(playerid)
-        calSetDate(y, m, d)
-
         calScanNow()
         calProcessRefreshes()
         showCalMenu(playerid)
@@ -2217,7 +2208,7 @@ function cityBuy(rawArg, playerid) {
             btn('+1 день', "loot-tracker --cal-advance|" + 1, 'Продвинуть день и обработать перезарядки') +
             btn('+7 дней', "loot-tracker --cal-advance|" + 7, 'Продвинуть 7 дней и обработать перезарядки') +
             btn('Задать день', "loot-tracker --cal-set|?{День|" + day + "}", 'Установить текущий служебный день') +
-            btn('Задать дату', "loot-tracker --cal-set-date|?{Год|" + gy + "}|?{Месяц 1-12|" + gm + "}|?{День|" + gd + "}", 'Установить григорианскую дату') +
+            btn('Задать дату', "loot-tracker --set-date|?{Год|" + gy + "}|?{Месяц 1-12|" + gm + "}|?{День|" + gd + "}", 'Установить григорианскую дату') +
             btn('Скан сейчас', "loot-tracker --cal-scan", 'Скан токенов на странице без продвижения дня') +
             btn('Сегодня', "loot-tracker --cal-today", 'Показать текущую дату красивой карточкой') +
             "</div>"
@@ -3574,7 +3565,7 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
         'cal': function () { showCalMenu(playerid) },
         'cal-advance': function () { calAdvanceCmd(arg, playerid) },
         'cal-set': function () { calSetCmd(arg, playerid) },
-        'cal-set-date': function () { calSetDateCmd(arg, playerid) },
+        'set-date': function () { calSetDateCmd(arg, playerid) },
         'cal-today': function () { showCalTodayWindow(playerid) },
         'cal-scan': function () { calScanCmd(playerid) },
         'cal-cd-set': function () { calCdSetCmd(arg, playerid) },
@@ -6002,7 +5993,7 @@ function skipDay(playerid) {
             "<div><b>Добавить в очередь крафта</b>: " + htmlEscape(CMD_ROOT) + " --craft|название|кол-во|ID_исполнителя</div>" +
             "<div><b>Энергия</b>: " + htmlEscape(CMD_ROOT) + " --energy</div>" +
             "<div><b>Отнять день</b>: " + htmlEscape(CMD_ROOT) + " --day</div>" +
-            "<div><b>Календарь (дата)</b>: " + htmlEscape(CMD_ROOT) + " --cal-set-date|год|месяц|день</div>" +
+            "<div><b>Календарь (дата)</b>: " + htmlEscape(CMD_ROOT) + " --set-date|год|месяц|день</div>" +
             "<div><b>Сегодня (карточка)</b>: " + htmlEscape(CMD_ROOT) + " --cal-today</div>" +
             "<hr style='border:0;border-top:1px solid #555;margin:8px 0'/>" +
             "<div><b>Инвентарь</b>: " + htmlEscape(CMD_ROOT) + " --inventory</div>" +
