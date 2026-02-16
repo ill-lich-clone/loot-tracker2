@@ -385,6 +385,26 @@
         "Инструменты Повара"                      : { type: "Инструменты",          cost: "1 зм",    rank: 0, weight: "8 фнт", material: "Железо", tools: "Кузнеца", desc: "—", value: 100 },
         "Инструменты Ювелира"                     : { type: "Инструменты",          cost: "25 зм",   rank: 0, weight: "2 фнт", material: "Железо", tools: "Кузнеца", desc: "—", value: 100 },
     }
+
+    const MAGIC_ITEM_INFO_MAP = {
+        "Пример магического предмета": {
+            Type: "Магический предмет",
+            itemRarity: "Обычный",
+            ItemType: "Чудесный предмет",
+            itemSubtype: "—",
+            itemSlot: "Шея",
+            itemSourse: "DMG14",
+            rank: 1,
+            item_materials: "Стандартные",
+            itemBargaining: "Нормальные",
+            itemCost: "(2d6kl1+1)*10 зм",
+            item_impact: "Второстепенный",
+            itemAttunementDetails: "дварфом",
+            isConsumable: "False",
+            Desc: "Тестовое описание свойств предмета",
+            value: 150
+        }
+    }
     
     const MATERIAL_INFO_MAP = {
         "Железо"      : { kind: "Минерал",  source: "Железная руда",        cost: "1 см",   weight: "1 фнт.", rank: 1, usage: "Базовый металл. Годится для оружия, брони, механизмов и усиления конструкций.", value: 0 },
@@ -2299,6 +2319,11 @@ function cityBuy(rawArg, playerid) {
             cmd: 'loot-tracker --inventory',
             tip: 'Открыть групповой инвентарь'
         },
+        heroDoll: {
+            label: '🧍',
+            cmd: 'loot-tracker --hero-doll',
+            tip: 'Кукла героя (магические предметы)'
+        },
         party: {
             label: '👥',
             cmd: 'loot-tracker --party',
@@ -2590,6 +2615,8 @@ function cityBuy(rawArg, playerid) {
             if (m.energyCur === undefined) m.energyCur = null
             if (m.energyMaxOverride === undefined) m.energyMaxOverride = null
             if (m.conModOverride === undefined) m.conModOverride = null
+            m.heroDoll = m.heroDoll || {}
+            m.heroDoll.slots = m.heroDoll.slots || {}
         })
     }
 
@@ -2713,6 +2740,176 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
         return store
     }
 
+    const HERO_DOLL_SLOTS = [
+        'Голова',
+        'Шея',
+        'Плечи',
+        'Грудь',
+        'Наручи',
+        'Ноги',
+        'Кольцо 1',
+        'Кольцо 2',
+        'Пояс',
+        'Левая рука',
+        'Правая рука',
+        'Спина 1',
+        'Спина 2',
+        'Спина 3',
+        'Спина 4',
+        'Спина 5'
+    ]
+
+    function getLootInfoByName(name) {
+        const key = findKeyInsensitiveIn(LOOT_INFO_MAP || {}, name)
+        if (key) return { key, info: LOOT_INFO_MAP[key], source: 'loot' }
+
+        const mk = findKeyInsensitiveIn(MAGIC_ITEM_INFO_MAP || {}, name)
+        if (mk) return { key: mk, info: MAGIC_ITEM_INFO_MAP[mk], source: 'magic' }
+
+        return { key: '', info: null, source: '' }
+    }
+
+    function isMagicItemName(name) {
+        const rec = getLootInfoByName(name)
+        if (!rec.info) return false
+        if (rec.source === 'magic') return true
+
+        const t = String(rec.info.type || rec.info.Type || '').toLowerCase()
+        return t.indexOf('маг') !== -1
+    }
+
+    function parseMagicItemSlot(info) {
+        const slot = String((info && info.itemSlot) || '').trim()
+        if (!slot) return ''
+
+        const low = slot.toLowerCase()
+        if (low.indexOf('кольц') !== -1) return 'Кольцо'
+        if (low.indexOf('спин') !== -1) return 'Спина'
+        if (low.indexOf('рук') !== -1) return 'Рука'
+        if (low.indexOf('голов') !== -1) return 'Голова'
+        if (low.indexOf('ше') !== -1) return 'Шея'
+        if (low.indexOf('плеч') !== -1) return 'Плечи'
+        if (low.indexOf('груд') !== -1) return 'Грудь'
+        if (low.indexOf('наруч') !== -1) return 'Наручи'
+        if (low.indexOf('ног') !== -1) return 'Ноги'
+        if (low.indexOf('пояс') !== -1) return 'Пояс'
+        return slot
+    }
+
+    function getMemberHeroDoll(member) {
+        member.heroDoll = member.heroDoll || {}
+        member.heroDoll.slots = member.heroDoll.slots || {}
+        return member.heroDoll
+    }
+
+    function normalizeHeroDollSlot(slot) {
+        const raw = String(slot || '').trim()
+        if (!raw) return ''
+
+        const low = raw.toLowerCase()
+        const byAlias = {
+            'голова': 'Голова',
+            'шея': 'Шея',
+            'плечи': 'Плечи',
+            'грудь': 'Грудь',
+            'наручи': 'Наручи',
+            'ноги': 'Ноги',
+            'пояс': 'Пояс',
+            'левая рука': 'Рука',
+            'правая рука': 'Рука',
+            'рука': 'Рука',
+            'кольцо': 'Кольцо',
+            'спина': 'Спина'
+        }
+        if (byAlias[low]) return byAlias[low]
+        if (low.indexOf('рук') !== -1) return 'Рука'
+
+        const exact = findKeyInsensitiveIn(HERO_DOLL_SLOTS.reduce((m, s) => { m[s] = true; return m }, {}), raw)
+        return exact || raw
+    }
+
+    function getEquippedItemUsageMap() {
+        const out = {}
+        const store = getStore()
+        const members = store.party && store.party.members ? store.party.members : {}
+
+        Object.keys(members).forEach(id => {
+            const m = members[id]
+            if (!m || !m.heroDoll || !m.heroDoll.slots) return
+            const slots = m.heroDoll.slots
+            Object.keys(slots).forEach(slotKey => {
+                const itemName = String(slots[slotKey] || '').trim()
+                if (!itemName) return
+                const real = findKeyInsensitiveIn(store.items || {}, itemName) || itemName
+                out[real] = (out[real] || 0) + 1
+            })
+        })
+
+        return out
+    }
+
+    function getAvailableItemQty(itemName, store, equippedMap) {
+        store = store || getStore()
+        equippedMap = equippedMap || getEquippedItemUsageMap()
+
+        const key = findKeyInsensitiveIn(store.items || {}, itemName)
+        if (!key) return { key: '', qty: 0, totalQty: 0, equippedQty: 0 }
+
+        const it = store.items[key]
+        const totalQty = toNumber(it && it.qty, 0)
+        const equippedQty = toNumber(equippedMap[key], 0)
+        return {
+            key,
+            qty: Math.max(0, totalQty - equippedQty),
+            totalQty,
+            equippedQty
+        }
+    }
+
+    function getPreferredCharacterForHeroDoll(msg, store) {
+        const ch = guessCharacter(msg || {})
+        if (ch && store.party && store.party.members && store.party.members[ch.id]) return ch.id
+
+        const members = store.party && store.party.members ? store.party.members : {}
+        const ids = Object.keys(members)
+        return ids.length ? ids[0] : ''
+    }
+
+    function resolveHeroDollMemberId(rawArg, msg) {
+        const store = getStore()
+        const members = store.party && store.party.members ? store.party.members : {}
+
+        const raw = String(rawArg || '').trim()
+        if (!raw) return getPreferredCharacterForHeroDoll(msg, store)
+
+        if (members[raw]) return raw
+
+        const ch = findCharacterByIdOrName(raw)
+        if (ch && members[ch.id]) return ch.id
+
+        const byName = Object.keys(members).find(id => String((members[id] && members[id].name) || '').trim().toLowerCase() === raw.toLowerCase())
+        return byName || ''
+    }
+
+    function findFirstFreeHeroSlot(slots, slotClass) {
+        if (slotClass === 'Кольцо') {
+            return !slots['Кольцо 1'] ? 'Кольцо 1' : (!slots['Кольцо 2'] ? 'Кольцо 2' : '')
+        }
+        if (slotClass === 'Спина') {
+            for (let i = 1; i <= 5; i++) {
+                const k = 'Спина ' + i
+                if (!slots[k]) return k
+            }
+            return ''
+        }
+        if (slotClass === 'Рука' || slotClass === 'Левая рука' || slotClass === 'Правая рука') {
+            if (!slots['Левая рука']) return 'Левая рука'
+            if (!slots['Правая рука']) return 'Правая рука'
+            return ''
+        }
+        return slotClass
+    }
+
     // ───────────────────────────────────────────────────────────────────────────
     // УТИЛИТЫ: ЛУТ
     // ───────────────────────────────────────────────────────────────────────────
@@ -2775,8 +2972,13 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
     }
 
     function parseWeightFromInfo(name) {
-        const info = LOOT_INFO_MAP[name]
-        if (!info || !info.weight) return 0
+        const rec = getLootInfoByName(name)
+        const info = rec.info
+        if (!info) return 0
+
+        if (rec.source === 'magic') return 2
+        if (!info.weight && isMagicItemName(name)) return 2
+        if (!info.weight) return 0
         const m = String(info.weight).match(/-?\d+([.,]\d+)?/g)
         if (!m) return 0
         return toNumber(m[0], 0)
@@ -3512,6 +3714,9 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
         'coins': function () { changeCoins(arg, playerid) },
         'coin': function () { changeSingleCoin(arg, playerid) },
         'inventory': function () { showInventory(playerid, arg) },
+        'hero-doll': function () { showHeroDoll(arg, playerid) },
+        'hero-doll-equip': function () { equipMagicItemToHeroDoll(arg, playerid) },
+        'hero-doll-unequip': function () { unequipMagicItemFromHeroDoll(arg, playerid) },
         'info': function () { showSingleItemInfo(arg, playerid) },
         'delete': function () { deleteItem(arg, playerid) },
         'edit': function () { editItem(arg, playerid) },
@@ -3687,8 +3892,25 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
         let page = toNumber(rawArg, 1)
         page = Math.max(1, Math.floor(page))
 
+        const equippedMap = getEquippedItemUsageMap()
         const names = Object.keys(store.items).sort((a, b) => a.localeCompare(b, 'ru'))
-        const items = names.map(n => store.items[n])
+        const items = names
+            .map(n => {
+                const it = store.items[n]
+                const totalQty = toNumber(it && it.qty, 0)
+                const equippedQty = toNumber(equippedMap[n], 0)
+                const availableQty = nice2(totalQty - equippedQty)
+                if (availableQty <= 0) return null
+
+                return {
+                    name: n,
+                    qty: availableQty,
+                    unitWeight: toNumber(it && it.unitWeight, 0),
+                    totalQty,
+                    equippedQty
+                }
+            })
+            .filter(Boolean)
 
         const totalKinds = items.length
         const totalPages = Math.max(1, Math.ceil(totalKinds / PAGE_SIZE))
@@ -3841,6 +4063,7 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
             const qty = nice2(item.qty)
             const unitW = nice2(item.unitWeight)
             const totalW = nice2(qty * unitW)
+            const equippedQty = nice2(item.equippedQty || 0)
 
             const infoCmd = isMat
                 ? ('loot-tracker --materials-info|' + stripMaterialSuffix(nm))
@@ -3860,6 +4083,9 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
                 "      <span style='display:block; font-size:0.9em; color:#ccc;'>" +
                 "Кол-во: " + htmlEscape(qty) + " · 1 шт: " + htmlEscape(unitW) + " фнт · всего: " + htmlEscape(totalW) + " фнт" +
                 "</span>" +
+                (equippedQty > 0
+                    ? ("<span style='display:block; font-size:0.85em; color:#888;'>Экипировано на куклах: " + htmlEscape(equippedQty) + "</span>")
+                    : "") +
                 "    </div>" +
                 "  </div>" +
                 "  <div style='display:inline-block; width:35%; text-align:right; vertical-align:top;'>" +
@@ -3878,7 +4104,7 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
             (page < totalPages ? btn('▶', 'loot-tracker --inventory|' + (page + 1), 'Следующая страница') : "") +
             "</div>"
 
-        const nav = renderNav(['addLoot', 'menu', 'materials'], editable)
+        const nav = renderNav(['addLoot', 'heroDoll', 'menu', 'materials'], editable)
 
         const html =
             openReport +
@@ -3890,6 +4116,171 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
             closeReport
 
         whisper(playerid, html)
+    }
+
+    function buildHeroDollGrid(memberId) {
+        const store = getStore()
+        const member = store.party.members[memberId]
+        if (!member) return ''
+
+        const doll = getMemberHeroDoll(member)
+        const slots = doll.slots || {}
+
+        const slotBadge = (slotKey) => {
+            const itemName = String(slots[slotKey] || '').trim()
+            const content = itemName
+                ? ("<div style='font-size:11px;line-height:1.2;word-break:break-word;'><b>" + htmlEscape(slotKey) + "</b><br/>" + htmlEscape(itemName) + "</div>")
+                : ("<div style='font-size:11px;color:#999;'><b>" + htmlEscape(slotKey) + "</b><br/>пусто</div>")
+
+            return "<div style='min-height:52px;border:1px solid #7b5c2f;background:rgba(20,10,5,0.9);padding:4px;border-radius:6px;'>" + content + "</div>"
+        }
+
+        const ordered = [
+            'Голова', 'Шея', 'Плечи', 'Грудь', 'Наручи', 'Ноги', 'Пояс',
+            'Левая рука', 'Правая рука', 'Кольцо 1', 'Кольцо 2',
+            'Спина 1', 'Спина 2', 'Спина 3', 'Спина 4', 'Спина 5'
+        ]
+
+        return "<div style='display:grid;grid-template-columns:repeat(3,1fr);gap:6px;'>" +
+            ordered.map(slotBadge).join('') +
+            "</div>"
+    }
+
+    function showHeroDoll(rawArg, playerid) {
+        const store = getStore()
+        const memberId = resolveHeroDollMemberId(rawArg, lastMsg)
+        if (!memberId || !store.party.members[memberId]) {
+            return whisper(playerid, openReport + "<div style='color:#fff;'>Нет персонажа из команды для куклы героя</div>" + closeReport)
+        }
+
+        const member = store.party.members[memberId]
+        const doll = getMemberHeroDoll(member)
+        const slots = doll.slots || {}
+
+        const equippedNames = Object.keys(slots)
+            .map(k => String(slots[k] || '').trim())
+            .filter(Boolean)
+
+        const equippedCount = equippedNames.length
+        const invItems = store.items || {}
+        const equippedUsage = getEquippedItemUsageMap()
+
+        const equipCandidates = Object.keys(invItems)
+            .filter(name => {
+                if (!isMagicItemName(name)) return false
+                const avail = getAvailableItemQty(name, store, equippedUsage)
+                return avail.qty >= 1
+            })
+            .sort((a, b) => a.localeCompare(b, 'ru'))
+
+        const equipBtns = equipCandidates.length
+            ? equipCandidates.map(name => {
+                const rec = getLootInfoByName(name)
+                const info = rec.info || {}
+                const slot = parseMagicItemSlot(info) || '—'
+                const cmd = 'loot-tracker --hero-doll-equip|' + memberId + '|' + name
+                return "<div style='margin:3px 0;padding:3px 0;border-bottom:1px solid #3d2d18;'>" +
+                    btn('＋', cmd, 'Экипировать на куклу героя') +
+                    " <b>" + htmlEscape(name) + "</b> <span style='color:#aaa'>(" + htmlEscape(slot) + ")</span>" +
+                    "</div>"
+            }).join('')
+            : "<div style='color:#999;'>Нет доступных магических предметов в инвентаре.</div>"
+
+        const unequipBtns = equippedCount
+            ? Object.keys(slots)
+                .filter(slot => String(slots[slot] || '').trim())
+                .map(slot => {
+                    const cmd = 'loot-tracker --hero-doll-unequip|' + memberId + '|' + slot
+                    return "<div style='margin:3px 0;padding:3px 0;border-bottom:1px solid #3d2d18;'>" +
+                        btn('－', cmd, 'Снять предмет') +
+                        " <b>" + htmlEscape(slot) + "</b>: " + htmlEscape(slots[slot]) +
+                        "</div>"
+                }).join('')
+            : "<div style='color:#999;'>На кукле пока ничего не экипировано.</div>"
+
+        const switchCmd = 'loot-tracker --hero-doll|?{ID или имя персонажа|' + htmlEscape((member && member.name) || '') + '}'
+
+        const html =
+            openReport +
+            "<div style='text-align:left;color:#d4b176;border:2px solid #6b3d1b;border-radius:8px;padding:8px;background:linear-gradient(180deg,#2f1b10 0%,#1a120d 100%);'>" +
+            "<div style='font-weight:bold;color:#ffd37a;margin-bottom:6px;'>Кукла героя: " + htmlEscape((member && member.name) || memberId) + "</div>" +
+            "<div style='margin-bottom:8px;'>" +
+            btn('Сменить героя', switchCmd, 'Открыть куклу другого персонажа') +
+            "</div>" +
+            buildHeroDollGrid(memberId) +
+            "<div style='margin-top:8px;color:#ccc;'>Экипировано: <b style='color:#fff;'>" + htmlEscape(equippedCount) + "</b></div>" +
+            "<hr style='border:0;border-top:1px solid #6b3d1b;margin:8px 0;'/>" +
+            "<div style='color:#fff;font-weight:bold;margin-bottom:4px;'>Экипировать магический предмет</div>" +
+            "<div style='max-height:180px;overflow:auto;'>" + equipBtns + "</div>" +
+            "<div style='color:#fff;font-weight:bold;margin:8px 0 4px;'>Снять со слота</div>" +
+            "<div style='max-height:140px;overflow:auto;'>" + unequipBtns + "</div>" +
+            renderNav(['heroDoll', 'inventory', 'party', 'menu'], canEdit(playerid), 'left') +
+            "</div>" +
+            closeReport
+
+        whisper(playerid, html)
+    }
+
+    function equipMagicItemToHeroDoll(rawArg, playerid) {
+        if (!canEdit(playerid)) return showHeroDoll('', playerid)
+
+        const parts = String(rawArg || '').split('|').map(s => (s || '').trim())
+        const memberId = resolveHeroDollMemberId(parts[0], lastMsg)
+        const itemNameRaw = parts[1] || ''
+        if (!memberId || !itemNameRaw) return showHeroDoll(parts[0], playerid)
+
+        const store = getStore()
+        const member = store.party.members[memberId]
+        if (!member) return showHeroDoll('', playerid)
+
+        const itemStatus = getAvailableItemQty(itemNameRaw, store)
+        if (!itemStatus.key || itemStatus.qty < 1) {
+            return whisper(playerid, openReport + "<div style='color:#fff;'>Нет свободного магического предмета в инвентаре: <b>" + htmlEscape(itemNameRaw) + "</b></div>" + closeReport)
+        }
+
+        const itemName = itemStatus.key
+        if (!isMagicItemName(itemName)) {
+            return whisper(playerid, openReport + "<div style='color:#fff;'>Этот предмет не считается магическим: <b>" + htmlEscape(itemName) + "</b></div>" + closeReport)
+        }
+
+        const rec = getLootInfoByName(itemName)
+        const slotClass = normalizeHeroDollSlot(parseMagicItemSlot(rec.info))
+        if (!slotClass) {
+            return whisper(playerid, openReport + "<div style='color:#fff;'>У предмета не задан itemSlot в MAGIC_ITEM_INFO_MAP: <b>" + htmlEscape(itemName) + "</b></div>" + closeReport)
+        }
+
+        const doll = getMemberHeroDoll(member)
+        const slots = doll.slots || {}
+        const slotKey = findFirstFreeHeroSlot(slots, slotClass)
+        if (!slotKey) {
+            return whisper(playerid, openReport + "<div style='color:#fff;'>Нет свободного слота для: <b>" + htmlEscape(slotClass) + "</b></div>" + closeReport)
+        }
+
+        slots[slotKey] = itemName
+        showHeroDoll(memberId, playerid)
+    }
+
+    function unequipMagicItemFromHeroDoll(rawArg, playerid) {
+        if (!canEdit(playerid)) return showHeroDoll('', playerid)
+
+        const parts = String(rawArg || '').split('|').map(s => (s || '').trim())
+        const memberId = resolveHeroDollMemberId(parts[0], lastMsg)
+        const rawSlot = parts[1] || ''
+        if (!memberId || !rawSlot) return showHeroDoll(parts[0], playerid)
+
+        const store = getStore()
+        const member = store.party.members[memberId]
+        if (!member) return showHeroDoll('', playerid)
+
+        const doll = getMemberHeroDoll(member)
+        const slots = doll.slots || {}
+        const slotKey = findKeyInsensitiveIn(slots, rawSlot) || rawSlot
+        if (!slots[slotKey]) {
+            return whisper(playerid, openReport + "<div style='color:#fff;'>В слоте ничего нет: <b>" + htmlEscape(rawSlot) + "</b></div>" + closeReport)
+        }
+
+        delete slots[slotKey]
+        showHeroDoll(memberId, playerid)
     }
 
     function showSingleItemInfo(rawName, playerid) {
@@ -3910,8 +4301,8 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
         const item = store.items[invKey] || null
     
         // инфу тоже лучше искать нечувствительно к регистру
-        const infoKey = findKeyInsensitiveIn(LOOT_INFO_MAP || {}, invKey) || invKey
-        const info = (LOOT_INFO_MAP || {})[infoKey] || null
+        const rec = getLootInfoByName(invKey)
+        const info = rec.info
     
         const qty = item ? nice2(item.qty) : 0
         const unitW = item ? nice2(item.unitWeight) : 0
@@ -3950,13 +4341,15 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
             line("Вес всего", totalW + " фнт") +
             (info
                 ? (
-                    (info.cost ? line("Стоимость", info.cost) : '') +
-                    (info.weight ? line("Базовый вес (справка)", info.weight) : '') +
-                    (info.usage ? line("Применение", info.usage) : '') +
-                    (info.desc ? line("Описание", info.desc) : '') +
+                    (info.cost || info.itemCost ? line("Стоимость", info.cost || info.itemCost) : '') +
+                    ((info.weight || rec.source === 'magic') ? line("Базовый вес (справка)", info.weight || '2 фнт.') : '') +
+                    (info.usage || info.item_impact ? line("Применение", info.usage || info.item_impact) : '') +
+                    (info.desc || info.Desc ? line("Описание", info.desc || info.Desc) : '') +
+                    (info.itemSlot ? line("Слот", info.itemSlot) : '') +
+                    (info.itemRarity ? line("Редкость", info.itemRarity) : '') +
                     (info.value !== undefined ? line("Ценность (value)", info.value) : '')
                 )
-                : "<div style='color:#ccc; text-align:left; margin-top:6px;'>В базе LOOT_INFO_MAP нет записи для этого предмета</div>"
+                : "<div style='color:#ccc; text-align:left; margin-top:6px;'>В базах LOOT_INFO_MAP/MAGIC_ITEM_INFO_MAP нет записи для этого предмета</div>"
             ) +
             closeReport
     
@@ -4206,11 +4599,13 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
 
         const qty = toNumber(it.qty, 0)
         const unitW = toNumber(it.unitWeight, 0)
+        const avail = getAvailableItemQty(key, store)
+        const availableQty = toNumber(avail.qty, 0)
 
         // ломать можно только “штуками” (целым count)
-        const maxCount = Math.floor(qty)
+        const maxCount = Math.floor(availableQty)
         if (maxCount <= 0 || unitW <= 0) {
-            return whisper(playerid, openReport + "<div style='color:#fff;'>Нельзя сломать: некорректное количество/вес</div>" + closeReport)
+            return whisper(playerid, openReport + "<div style='color:#fff;'>Нельзя сломать: нет свободных (неэкипированных) предметов</div>" + closeReport)
         }
 
         let count = 1
@@ -4328,6 +4723,8 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
         if (!it) return showInventory(playerid, 1)
     
         const qty = toNumber(it.qty, 0)
+        const avail = getAvailableItemQty(key, store)
+        const availableQty = toNumber(avail.qty, 0)
         if (!(qty > 0)) {
             return whisper(playerid, openReport + "<div style='color:#fff;'>Некорректное количество у предмета</div>" + closeReport)
         }
@@ -4348,7 +4745,7 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
             count = Math.max(0, Math.min(qty, count))
         } else {
             // предметы — только целыми штуками
-            const maxCount = Math.floor(qty)
+            const maxCount = Math.floor(availableQty)
             count = Math.floor(count)
             count = Math.max(1, Math.min(maxCount, count))
         }
@@ -4363,9 +4760,9 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
             const info = (MATERIAL_INFO_MAP || {})[matKey] || null
             costText = info ? String(info.cost || '').trim() : ''
         } else {
-            const infoKey = findKeyInsensitiveIn(LOOT_INFO_MAP || {}, key) || key
-            const info = (LOOT_INFO_MAP || {})[infoKey] || null
-            costText = info ? String(info.cost || '').trim() : ''
+            const rec = getLootInfoByName(key)
+            const info = rec.info || null
+            costText = info ? String(info.cost || info.itemCost || '').trim() : ''
         }
     
         if (!costText) {
@@ -4524,6 +4921,8 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
         const key = findKeyInsensitiveIn(store.items, name) || name
         const it = store.items[key]
         if (!it) return showInventory(playerid, 1)
+        const equippedMap = getEquippedItemUsageMap()
+        const equippedQty = toNumber(equippedMap[key], 0)
 
         if (unitWeightStr !== '') {
             const v = toNumber(unitWeightStr, NaN)
@@ -4535,6 +4934,9 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
             const v = toNumber(qtyStr.replace('=', ''), NaN)
             if (!isNaN(v)) {
                 const next = isDelta ? (toNumber(it.qty, 0) + v) : v
+                if (next < equippedQty) {
+                    return whisper(playerid, openReport + "<div style='color:#fff;'>Нельзя поставить количество меньше экипированного на куклах: <b>" + htmlEscape(equippedQty) + "</b></div>" + closeReport)
+                }
                 if (next <= 0) {
                     delete store.items[key]
                     return showInventory(playerid, 1)
@@ -4554,6 +4956,10 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
         if (!name) return showInventory(playerid, 1)
 
         const key = findKeyInsensitiveIn(store.items, name) || name
+        const equippedMap = getEquippedItemUsageMap()
+        if (toNumber(equippedMap[key], 0) > 0) {
+            return whisper(playerid, openReport + "<div style='color:#fff;'>Нельзя удалить предмет: он экипирован на кукле героя</div>" + closeReport)
+        }
         delete store.items[key]
         showInventory(playerid, 1)
     }
@@ -4724,7 +5130,7 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
         const warnFood = (foodLb < sumFoodPerDay) ? " <span style='color:#ffb3b3'>(не хватает на 1 день)</span>" : ""
         const warnWater = (waterGal < sumWaterGalPerDay) ? " <span style='color:#ffb3b3'>(не хватает на 1 день)</span>" : ""
 
-        const topButtons = renderNav(['inventory', 'party', 'energy', 'craft', 'day', 'daySkip'], editable)
+        const topButtons = renderNav(['inventory', 'heroDoll', 'party', 'energy', 'craft', 'day', 'daySkip'], editable)
         
         const foodDaysApprox = sumFoodPerDay > 0 ? (foodLb / sumFoodPerDay) : 0
         const waterDaysApprox = sumWaterGalPerDay > 0 ? (waterGal / sumWaterGalPerDay) : 0
@@ -5997,6 +6403,8 @@ function skipDay(playerid) {
             "<div><b>Сегодня (карточка)</b>: " + htmlEscape(CMD_ROOT) + " --cal-today</div>" +
             "<hr style='border:0;border-top:1px solid #555;margin:8px 0'/>" +
             "<div><b>Инвентарь</b>: " + htmlEscape(CMD_ROOT) + " --inventory</div>" +
+            "<div><b>Кукла героя</b>: " + htmlEscape(CMD_ROOT) + " --hero-doll|ID_или_имя</div>" +
+            "<div style='color:#aaa; font-size:0.9em;'>Экипировать: --hero-doll-equip|ID|предмет · Снять: --hero-doll-unequip|ID|слот</div>" +
             "<div><b>Добавить/изменить предмет</b>: " + htmlEscape(CMD_ROOT) + " --takeloot|название|вес_1шт|кол-во</div>" +
             "<div style='color:#aaa; font-size:0.9em;'>Пример: --takeloot|древний металл|4|+2</div>" +
             "<div><b>Монеты</b>: " + htmlEscape(CMD_ROOT) + " --coins|mm|+10,sm|-2,zm|+1,pm|-1</div>" +
