@@ -2561,7 +2561,8 @@ function cityBuy(rawArg, playerid) {
         calScanNow()
         calProcessRefreshes()
         showCalMenu(playerid)
-    }
+}
+
 
     function calScanCmd(playerid) {
         if (!canEdit(playerid)) return whisper(playerid, openReport + "<div style='color:#fff;'>Недостаточно прав (нужен ГМ)</div>" + closeReport)
@@ -2789,8 +2790,8 @@ function cityBuy(rawArg, playerid) {
         },
         heroDoll: {
             label: '🧍',
-            cmd: 'loot-tracker --hero-doll',
-            tip: 'Кукла героя (магические предметы)'
+            cmd: 'loot-tracker --hero-doll|?{ID или имя персонажа|}',
+            tip: 'Кукла героя (магические предметы) — выбрать персонажа'
         },
         party: {
             label: '👥',
@@ -4594,13 +4595,23 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
         const doll = getMemberHeroDoll(member)
         const slots = doll.slots || {}
 
-        const slotBadge = (slotKey) => {
-            const itemName = String(slots[slotKey] || '').trim()
-            const content = itemName
-                ? ("<div style='font-size:11px;line-height:1.2;word-break:break-word;'><b>" + htmlEscape(slotKey) + "</b><br/>" + htmlEscape(itemName) + "</div>")
-                : ("<div style='font-size:11px;color:#999;'><b>" + htmlEscape(slotKey) + "</b><br/>пусто</div>")
-
-            return "<div style='min-height:52px;border:1px solid #7b5c2f;background:rgba(20,10,5,0.9);padding:4px;border-radius:6px;'>" + content + "</div>"
+        const layout = {
+            'Голова': { left: 148, top: 8 },
+            'Шея': { left: 148, top: 64 },
+            'Плечи': { left: 92, top: 64 },
+            'Грудь': { left: 148, top: 120 },
+            'Наручи': { left: 92, top: 120 },
+            'Ноги': { left: 148, top: 176 },
+            'Пояс': { left: 148, top: 232 },
+            'Левая рука': { left: 36, top: 120 },
+            'Правая рука': { left: 260, top: 120 },
+            'Кольцо 1': { left: 92, top: 232 },
+            'Кольцо 2': { left: 204, top: 232 },
+            'Спина 1': { left: 316, top: 8 },
+            'Спина 2': { left: 316, top: 64 },
+            'Спина 3': { left: 316, top: 120 },
+            'Спина 4': { left: 316, top: 176 },
+            'Спина 5': { left: 316, top: 232 }
         }
 
         const ordered = [
@@ -4609,12 +4620,68 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
             'Спина 1', 'Спина 2', 'Спина 3', 'Спина 4', 'Спина 5'
         ]
 
-        return "<div style='display:grid;grid-template-columns:repeat(3,1fr);gap:6px;'>" +
-            ordered.map(slotBadge).join('') +
+        const renderSlot = (slotKey) => {
+            const pos = layout[slotKey] || { left: 0, top: 0 }
+            const itemName = String(slots[slotKey] || '').trim()
+            const occupied = !!itemName
+
+            const bg = occupied ? '#ffffff' : '#7a7a7a'
+            const fg = occupied ? '#111111' : '#dcdcdc'
+            const tip = occupied
+                ? (slotKey + ': ' + itemName)
+                : (slotKey + ': пусто')
+
+            const infoCmd = occupied ? ('loot-tracker --info|' + itemName) : ''
+            const infoBtn = occupied
+                ? ("<div style='position:absolute; right:2px; bottom:2px;'>" +
+                    btn('❓', infoCmd, 'Открыть описание предмета') +
+                "</div>")
+                : ''
+
+            const centerText = occupied
+                ? ("<div style='font-size:10px; line-height:1.1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:48px;'>" + htmlEscape(itemName) + "</div>")
+                : "<div style='font-size:10px; opacity:0.7;'>пусто</div>"
+
+            return "" +
+                "<div title='" + htmlEscape(tip) + "' style='" +
+                    "position:absolute;" +
+                    "left:" + pos.left + "px;" +
+                    "top:" + pos.top + "px;" +
+                    "width:54px;" +
+                    "height:54px;" +
+                    "border:1px solid #1d1d1d;" +
+                    "background:" + bg + ";" +
+                    "color:" + fg + ";" +
+                    "border-radius:3px;" +
+                    "box-shadow:inset 0 0 0 1px rgba(0,0,0,0.15);" +
+                    "padding:2px;" +
+                    "box-sizing:border-box;" +
+                    "text-align:center;" +
+                    "font-size:10px;" +
+                "'>" +
+                    "<div style='font-size:9px; opacity:0.8; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;'>" + htmlEscape(slotKey) + "</div>" +
+                    centerText +
+                    infoBtn +
+                "</div>"
+        }
+
+        const silhouette =
+            "<div style='position:absolute; left:123px; top:40px; width:110px; height:235px; " +
+            "background:linear-gradient(180deg, rgba(170,0,0,0.45) 0%, rgba(120,0,0,0.45) 100%); " +
+            "border:1px solid rgba(255,80,80,0.35); border-radius:54px 54px 30px 30px;'></div>" +
+            "<div style='position:absolute; left:154px; top:10px; width:48px; height:52px; background:rgba(170,0,0,0.45); border:1px solid rgba(255,80,80,0.35); border-radius:22px;'></div>"
+
+        return "" +
+            "<div style='position:relative; width:380px; height:300px; margin:0 auto; " +
+                "background:linear-gradient(180deg,#2a190f 0%,#170f0b 100%); " +
+                "border:1px solid #5f3b1f; border-radius:6px; overflow:hidden;'>" +
+                silhouette +
+                ordered.map(renderSlot).join('') +
             "</div>"
     }
 
     function showHeroDoll(rawArg, playerid) {
+
         const store = getStore()
         const memberId = resolveHeroDollMemberId(rawArg, lastMsg)
         if (!memberId || !store.party.members[memberId]) {
