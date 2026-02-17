@@ -6503,6 +6503,172 @@ function setPartyMemberToolMod(rawArg, playerid) {
         showPartyWindow(playerid)
     }
 
+    function setMemberRole(rawArg, playerid) {
+        if (!canEdit(playerid)) return whisper(playerid, openReport + "<div style='color:#fff;'>Недостаточно прав (нужен ГМ)</div>" + closeReport)
+
+        const store = getStore()
+        const parts = String(rawArg || '').split('|').map(s => (s || '').trim())
+        const id = parts[0]
+        const role = getMemberRole({ role: parts[1] || 'member' })
+
+        if (!id || !store.party.members[id]) return showPartyWindow(playerid)
+
+        const m = store.party.members[id]
+        const prevRole = getMemberRole(m)
+        m.role = role
+
+        if (!Array.isArray(m.consumptionRules) || prevRole !== role) {
+            m.consumptionRules = getDefaultConsumptionRulesByRole(role)
+        }
+
+        if (role !== 'member') {
+            m.energyCur = null
+        }
+
+        showPartyWindow(playerid)
+    }
+
+    function setMemberCustomConsumption(rawArg, playerid) {
+        if (!canEdit(playerid)) return whisper(playerid, openReport + "<div style='color:#fff;'>Недостаточно прав (нужен ГМ)</div>" + closeReport)
+
+        const store = getStore()
+        const parts = String(rawArg || '').split('|').map(s => (s || '').trim())
+        const id = parts[0]
+        const resource = parts[1] || ''
+        const amountStr = parts[2] || '0'
+        const unit = normalizeConsumeUnit(parts[3] || 'lb')
+
+        if (!id || !store.party.members[id]) return showPartyWindow(playerid)
+        if (!resource) return showPartyWindow(playerid)
+
+        const amount = toNumber(amountStr.replace('=', ''), NaN)
+        if (isNaN(amount)) return showPartyWindow(playerid)
+
+        const rules = getMemberConsumptionRules(id)
+        const idx = rules.findIndex(r => String(r.resource || '').trim().toLowerCase() === resource.toLowerCase())
+
+        if (amount <= 0) {
+            if (idx >= 0) rules.splice(idx, 1)
+            return showPartyWindow(playerid)
+        }
+
+        const key = resource.toLowerCase() === FOOD_ITEM_NAME.toLowerCase() ? 'food' : (resource.toLowerCase() === WATER_ITEM_NAME.toLowerCase() ? 'water' : 'custom')
+        const nextRule = { key: key, resource: resource, amount: nice2(amount), unit: unit }
+
+        if (idx >= 0) rules[idx] = nextRule
+        else rules.push(nextRule)
+
+        showPartyWindow(playerid)
+    }
+
+    function setMemberCapacityBonus(rawArg, playerid) {
+        if (!canEdit(playerid)) return whisper(playerid, openReport + "<div style='color:#fff;'>Недостаточно прав (нужен ГМ)</div>" + closeReport)
+
+        const store = getStore()
+        const parts = String(rawArg || '').split('|').map(s => (s || '').trim())
+        const id = parts[0]
+        const vStr = parts[1] || ''
+
+        if (!id || !store.party.members[id]) return showPartyWindow(playerid)
+
+        const cur = toNumber(store.party.members[id].capBonusLb, 0)
+
+        if (vStr === '') {
+            store.party.members[id].capBonusLb = 0
+            return showPartyWindow(playerid)
+        }
+
+        const isDelta = /^[+-]/.test(vStr)
+        const v = toNumber(vStr.replace('=', ''), NaN)
+        if (isNaN(v)) return showPartyWindow(playerid)
+
+        store.party.members[id].capBonusLb = nice2(isDelta ? (cur + v) : v)
+        showPartyWindow(playerid)
+    }
+
+    function setMemberRole(rawArg, playerid) {
+        if (!canEdit(playerid)) return whisper(playerid, openReport + "<div style='color:#fff;'>Недостаточно прав (нужен ГМ)</div>" + closeReport)
+
+        const store = getStore()
+        const parts = String(rawArg || '').split('|').map(s => (s || '').trim())
+        const id = parts[0]
+        const role = getMemberRole({ role: parts[1] || 'member' })
+
+        if (!id || !store.party.members[id]) return showPartyWindow(playerid)
+
+        const m = store.party.members[id]
+        const prevRole = getMemberRole(m)
+        m.role = role
+
+        if (!Array.isArray(m.consumptionRules) || prevRole !== role) {
+            m.consumptionRules = getDefaultConsumptionRulesByRole(role)
+        }
+
+        if (role !== 'member') {
+            m.energyCur = null
+        }
+
+        showPartyWindow(playerid)
+    }
+
+    function setMemberCustomConsumption(rawArg, playerid) {
+        if (!canEdit(playerid)) return whisper(playerid, openReport + "<div style='color:#fff;'>Недостаточно прав (нужен ГМ)</div>" + closeReport)
+
+        const store = getStore()
+        const parts = String(rawArg || '').split('|').map(s => (s || '').trim())
+        const id = parts[0]
+        const resource = parts[1] || ''
+        const amountStr = parts[2] || '0'
+        const unit = normalizeConsumeUnit(parts[3] || 'lb')
+
+        if (!id || !store.party.members[id]) return showPartyWindow(playerid)
+        if (!resource) return showPartyWindow(playerid)
+
+        const amount = toNumber(amountStr.replace('=', ''), NaN)
+        if (isNaN(amount)) return showPartyWindow(playerid)
+
+        const rules = getMemberConsumptionRules(id)
+        const idx = rules.findIndex(r => String(r.resource || '').trim().toLowerCase() === resource.toLowerCase())
+
+        if (amount <= 0) {
+            if (idx >= 0) rules.splice(idx, 1)
+            return showPartyWindow(playerid)
+        }
+
+        const key = resource.toLowerCase() === FOOD_ITEM_NAME.toLowerCase() ? 'food' : (resource.toLowerCase() === WATER_ITEM_NAME.toLowerCase() ? 'water' : 'custom')
+        const nextRule = { key: key, resource: resource, amount: nice2(amount), unit: unit }
+
+        if (idx >= 0) rules[idx] = nextRule
+        else rules.push(nextRule)
+
+        showPartyWindow(playerid)
+    }
+
+    function setMemberCapacityBonus(rawArg, playerid) {
+        if (!canEdit(playerid)) return whisper(playerid, openReport + "<div style='color:#fff;'>Недостаточно прав (нужен ГМ)</div>" + closeReport)
+
+        const store = getStore()
+        const parts = String(rawArg || '').split('|').map(s => (s || '').trim())
+        const id = parts[0]
+        const vStr = parts[1] || ''
+
+        if (!id || !store.party.members[id]) return showPartyWindow(playerid)
+
+        const cur = toNumber(store.party.members[id].capBonusLb, 0)
+
+        if (vStr === '') {
+            store.party.members[id].capBonusLb = 0
+            return showPartyWindow(playerid)
+        }
+
+        const isDelta = /^[+-]/.test(vStr)
+        const v = toNumber(vStr.replace('=', ''), NaN)
+        if (isNaN(v)) return showPartyWindow(playerid)
+
+        store.party.members[id].capBonusLb = nice2(isDelta ? (cur + v) : v)
+        showPartyWindow(playerid)
+    }
+
     function setDefaultCapacityMod(rawArg, playerid) {
         if (!canEdit(playerid)) return whisper(playerid, openReport + "<div style='color:#fff;'>Недостаточно прав (нужен ГМ)</div>" + closeReport)
 
