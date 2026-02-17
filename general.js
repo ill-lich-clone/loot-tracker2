@@ -3687,10 +3687,7 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
         const members = getPartyMembersList({ includeMissing: false })
         let totalCapacity = 0
         members.forEach(m => {
-            const eff = getMemberEffectiveStr(m.id)
-            const capMod = getMemberCapMod(m.id)
-            const capBonus = getMemberCapacityBonusLb(m.id)
-            totalCapacity += (toNumber(eff.str, 0) * toNumber(capMod, 0)) + toNumber(capBonus, 0)
+            totalCapacity += getMemberCapacityTotalLb(m.id)
         })
 
         const usedWeight = nice2(getTotalLootWeight())
@@ -4089,6 +4086,21 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
         return isNaN(v) ? 0 : nice2(v)
     }
 
+    function getMemberCapacityTotalLb(memberId) {
+        const store = getStore()
+        const m = store.party.members[memberId]
+        if (!m) return 0
+
+        const role = getMemberRole(m)
+        const capBonus = getMemberCapacityBonusLb(memberId)
+
+        if (role === 'transport') return Math.max(0, toNumber(capBonus, 0))
+
+        const eff = getMemberEffectiveStr(memberId)
+        const capMod = getMemberCapMod(memberId)
+        return Math.max(0, nice2((toNumber(eff.str, 0) * toNumber(capMod, 0)) + toNumber(capBonus, 0)))
+    }
+
     function getMemberRole(member) {
         const role = String((member && member.role) || 'member').trim().toLowerCase()
 
@@ -4117,8 +4129,8 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
         if (role === 'transport') return []
         if (role === 'mount') {
             return [
-                { key: 'food', resource: FOOD_ITEM_NAME, amount: 2, unit: 'lb' },
-                { key: 'water', resource: WATER_ITEM_NAME, amount: 2, unit: 'gal' }
+                { key: 'food', resource: FOOD_ITEM_NAME, amount: 4, unit: 'lb' },
+                { key: 'water', resource: WATER_ITEM_NAME, amount: 4, unit: 'gal' }
             ]
         }
         return [
@@ -4184,8 +4196,16 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
     }
 
     function renderMemberConsumptionShort(memberId) {
-        const rules = getMemberConsumptionRules(memberId)
-        if (!rules.length) return 'Расход/день: нет'
+        const store = getStore()
+        const m = store.party && store.party.members ? store.party.members[memberId] : null
+        const role = getMemberRole(m)
+
+        let rules = getMemberConsumptionRules(memberId)
+        if (role === 'transport') {
+            rules = rules.filter(r => r.key !== 'food' && r.key !== 'water')
+        }
+
+        if (!rules.length) return ''
 
         return 'Расход/день: ' + rules.map(r => {
             const unitLabel = normalizeConsumeUnit(r.unit) === 'gal' ? 'галл' : 'фнт'
@@ -5847,10 +5867,7 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
             sumFoodPerDay += getMemberFoodNeedLb(m.id)
             sumWaterGalPerDay += getMemberWaterNeedGal(m.id)
 
-            const eff = getMemberEffectiveStr(m.id)
-            const capMod = getMemberCapMod(m.id)
-            const capBonus = getMemberCapacityBonusLb(m.id)
-            totalCapacity += (toNumber(eff.str, 0) * toNumber(capMod, 0)) + toNumber(capBonus, 0)
+            totalCapacity += getMemberCapacityTotalLb(m.id)
         })
 
         const usedWeight = nice2(getTotalLootWeight())
@@ -5957,10 +5974,16 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
                 : ""
 
         const body = (members.length ? members.map((m, idx) => {
+            const role = getMemberRole(m)
+            const isTransport = role === 'transport'
+            const isMemberRole = role === 'member'
+            const isMountOrTransport = role === 'mount' || role === 'transport'
+
             const eff = getMemberEffectiveStr(m.id)
             const capMod = getMemberCapMod(m.id)
             const capBonus = getMemberCapacityBonusLb(m.id)
-            const cap = nice2((toNumber(eff.str, 0) * toNumber(capMod, 0)) + toNumber(capBonus, 0))
+            const cap = nice2(getMemberCapacityTotalLb(m.id))
+            const consumeShort = renderMemberConsumptionShort(m.id)
 
             const rmCmd = 'loot-tracker --party-remove|' + m.id
             const toolsCmd = 'loot-tracker --party-tools|' + m.id
@@ -5970,7 +5993,7 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
             const customCmd = 'loot-tracker --party-consume-custom|' + m.id + '|?{Ресурс (например Уголь)|}|?{Расход в день (0 = удалить правило)|0}|?{Ед. lb/gal|lb}'
             const strCmd = 'loot-tracker --party-str|' + m.id + '|?{СИЛ (пусто = брать с листа)|' + (store.party.members[m.id] && store.party.members[m.id].strOverride !== undefined && store.party.members[m.id].strOverride !== null ? store.party.members[m.id].strOverride : '') + '}'
             const capCmd = 'loot-tracker --party-capmod-member|' + m.id + '|?{Модификатор грузоподъёмности (пусто = по умолчанию)|' + (store.party.members[m.id] && store.party.members[m.id].capModOverride !== undefined && store.party.members[m.id].capModOverride !== null ? store.party.members[m.id].capModOverride : '') + '}'
-            const capBonusCmd = 'loot-tracker --party-capbonus-member|' + m.id + '|?{Бонус к грузоподъёмности, фнт (можно +10/-10)|' + (store.party.members[m.id] && store.party.members[m.id].capBonusLb !== undefined && store.party.members[m.id].capBonusLb !== null ? store.party.members[m.id].capBonusLb : 0) + '}'
+            const capBonusCmd = 'loot-tracker --party-capbonus-member|' + m.id + '|?{Грузоподъёмность/бонус, фнт (можно +10/-10)|' + (store.party.members[m.id] && store.party.members[m.id].capBonusLb !== undefined && store.party.members[m.id].capBonusLb !== null ? store.party.members[m.id].capBonusLb : 0) + '}'
 
             return "" +
                 "<div style='margin:4px 0; border-bottom:1px solid #555; padding:4px 2px; display:inline-block; width:100%;'>" +
@@ -5979,25 +6002,27 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
                 "      <span style='display:block; font-weight:bold;'>" + (idx + 1) + ". " + htmlEscape(m.name) + "</span>" +
                 "      <span style='display:block; font-size:0.9em; color:#ccc;'>Тип: " + htmlEscape(getRoleLabel(m.role)) + "</span>" +
                 (m.isMissing ? "<span style='display:block; color:#ffb3b3; font-size:0.9em;'>⚠ Лист персонажа не найден (старый ID).</span>" : "") +
-                "      <span style='display:block; font-size:0.9em; color:#ccc;'>" +
-                "СИЛ: " + htmlEscape(eff.str) + " <span style='color:#888;'>(" + htmlEscape(eff.source) + ")</span>" +
-                " · Мод: " + htmlEscape(nice2(capMod)) +
-                (capBonus ? (" · Бонус: +" + htmlEscape(nice2(capBonus)) + " фнт") : "") +
-                " · Груз.: " + htmlEscape(cap) + " фнт" +
-                "</span>" +
-                "      <span style='display:block; font-size:0.9em; color:#ccc;'>" + renderMemberConsumptionShort(m.id) + "</span>" +
+                (isTransport
+                    ? ("      <span style='display:block; font-size:0.9em; color:#ccc;'>Груз.: " + htmlEscape(cap) + " фнт</span>")
+                    : ("      <span style='display:block; font-size:0.9em; color:#ccc;'>" +
+                        "СИЛ: " + htmlEscape(eff.str) + " <span style='color:#888;'> (" + htmlEscape(eff.source) + ")</span>" +
+                        " · Мод: " + htmlEscape(nice2(capMod)) +
+                        (capBonus ? (" · Бонус: +" + htmlEscape(nice2(capBonus)) + " фнт") : "") +
+                        " · Груз.: " + htmlEscape(cap) + " фнт" +
+                        "</span>")) +
+                (consumeShort ? ("      <span style='display:block; font-size:0.9em; color:#ccc;'>" + consumeShort + "</span>") : "") +
                 "    </div>" +
                 "  </div>" +
                 "  <div style='display:inline-block; width:30%; text-align:right; vertical-align:top;'>" +
                 (editable ? btn('🏷', roleCmd, 'Тип существа: член команды / скакун / транспорт') : '') +
-                (editable ? btn('⛽', customCmd, 'Добавить/изменить расход своего ресурса (напр. Уголь)') : '') +
-                (editable ? btn('💪', strCmd, 'Задать СИЛ вручную (или очистить)') : '') +
-                (editable ? btn('🧱', capCmd, 'Модификатор грузоподъёмности (индивидуально)') : '') +
-                (editable ? btn('🎒', capBonusCmd, 'Бонус к грузоподъёмности в фнт') : '') +
-                (editable ? btn('🍞', foodCmd, 'Норма еды в день') : '') +
-                (editable ? btn('💧', waterCmd, 'Норма воды в день') : '') +
-                (editable ? btn('🗑', rmCmd, 'Удалить из команды') : '') + 
-                (editable ? btn('⚒️', toolsCmd, 'Открыть список инструментов') : '') +
+                (editable && isMountOrTransport ? btn('⛽', customCmd, 'Задать потребление (например Уголь)') : '') +
+                (editable && !isTransport ? btn('💪', strCmd, 'Задать СИЛ вручную (или очистить)') : '') +
+                (editable && !isTransport ? btn('🧱', capCmd, 'Модификатор грузоподъёмности (индивидуально)') : '') +
+                (editable ? btn('🎒', capBonusCmd, (isTransport ? 'Грузоподъёмность транспорта (фнт)' : 'Бонус к грузоподъёмности в фнт')) : '') +
+                (editable && role === 'mount' ? btn('🍞', foodCmd, 'Норма еды в день') : '') +
+                (editable && role === 'mount' ? btn('💧', waterCmd, 'Норма воды в день') : '') +
+                (editable ? btn('🗑', rmCmd, 'Удалить из команды') : '') +
+                (editable && isMemberRole ? btn('⚒️', toolsCmd, 'Открыть список инструментов') : '') +
                 "  </div>" +
                 "</div>"
         }).join('') : "<div style='color:#ccc; text-align:left; padding:6px 2px;'>Команда пуста</div>")
@@ -6392,6 +6417,89 @@ function setPartyMemberToolMod(rawArg, playerid) {
             rules.push({ key: field, resource: field === 'food' ? FOOD_ITEM_NAME : WATER_ITEM_NAME, amount: nice2(next), unit: field === 'water' ? 'gal' : 'lb' })
         }
 
+        showPartyWindow(playerid)
+    }
+
+    function setMemberRole(rawArg, playerid) {
+        if (!canEdit(playerid)) return whisper(playerid, openReport + "<div style='color:#fff;'>Недостаточно прав (нужен ГМ)</div>" + closeReport)
+
+        const store = getStore()
+        const parts = String(rawArg || '').split('|').map(s => (s || '').trim())
+        const id = parts[0]
+        const role = getMemberRole({ role: parts[1] || 'member' })
+
+        if (!id || !store.party.members[id]) return showPartyWindow(playerid)
+
+        const m = store.party.members[id]
+        const prevRole = getMemberRole(m)
+        m.role = role
+
+        if (!Array.isArray(m.consumptionRules) || prevRole !== role) {
+            m.consumptionRules = getDefaultConsumptionRulesByRole(role)
+        }
+
+        if (role !== 'member') {
+            m.energyCur = null
+        }
+
+        showPartyWindow(playerid)
+    }
+
+    function setMemberCustomConsumption(rawArg, playerid) {
+        if (!canEdit(playerid)) return whisper(playerid, openReport + "<div style='color:#fff;'>Недостаточно прав (нужен ГМ)</div>" + closeReport)
+
+        const store = getStore()
+        const parts = String(rawArg || '').split('|').map(s => (s || '').trim())
+        const id = parts[0]
+        const resource = parts[1] || ''
+        const amountStr = parts[2] || '0'
+        const unit = normalizeConsumeUnit(parts[3] || 'lb')
+
+        if (!id || !store.party.members[id]) return showPartyWindow(playerid)
+        if (!resource) return showPartyWindow(playerid)
+
+        const amount = toNumber(amountStr.replace('=', ''), NaN)
+        if (isNaN(amount)) return showPartyWindow(playerid)
+
+        const rules = getMemberConsumptionRules(id)
+        const idx = rules.findIndex(r => String(r.resource || '').trim().toLowerCase() === resource.toLowerCase())
+
+        if (amount <= 0) {
+            if (idx >= 0) rules.splice(idx, 1)
+            return showPartyWindow(playerid)
+        }
+
+        const key = resource.toLowerCase() === FOOD_ITEM_NAME.toLowerCase() ? 'food' : (resource.toLowerCase() === WATER_ITEM_NAME.toLowerCase() ? 'water' : 'custom')
+        const nextRule = { key: key, resource: resource, amount: nice2(amount), unit: unit }
+
+        if (idx >= 0) rules[idx] = nextRule
+        else rules.push(nextRule)
+
+        showPartyWindow(playerid)
+    }
+
+    function setMemberCapacityBonus(rawArg, playerid) {
+        if (!canEdit(playerid)) return whisper(playerid, openReport + "<div style='color:#fff;'>Недостаточно прав (нужен ГМ)</div>" + closeReport)
+
+        const store = getStore()
+        const parts = String(rawArg || '').split('|').map(s => (s || '').trim())
+        const id = parts[0]
+        const vStr = parts[1] || ''
+
+        if (!id || !store.party.members[id]) return showPartyWindow(playerid)
+
+        const cur = toNumber(store.party.members[id].capBonusLb, 0)
+
+        if (vStr === '') {
+            store.party.members[id].capBonusLb = 0
+            return showPartyWindow(playerid)
+        }
+
+        const isDelta = /^[+-]/.test(vStr)
+        const v = toNumber(vStr.replace('=', ''), NaN)
+        if (isNaN(v)) return showPartyWindow(playerid)
+
+        store.party.members[id].capBonusLb = nice2(isDelta ? (cur + v) : v)
         showPartyWindow(playerid)
     }
 
