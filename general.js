@@ -4223,6 +4223,7 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
         'party-tool-owned': function () { togglePartyToolOwned(arg, playerid) },
         'party-tool-prof': function () { togglePartyMemberToolProf(arg, playerid) },
         'party-tool-mod': function () { setPartyMemberToolMod(arg, playerid) },
+        'party-prune-missing': function () { pruneMissingPartyMembers(playerid) },
 
         'energy': function () { showEnergyWindow(playerid) },
         'energy-eat': function () { restoreEnergyByEating(arg, playerid) },
@@ -5717,7 +5718,7 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
         const waterLb = clamp0(getItemWeightByName(WATER_ITEM_NAME))
         const waterGal = waterLb / WATER_LB_PER_GALLON
 
-        const members = getPartyMembersList()
+        const members = getPartyMembersList({ includeMissing: false })
 
         let sumFoodPerDay = 0
         let sumWaterGalPerDay = 0
@@ -5780,17 +5781,26 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
         whisper(playerid, html)
     }
 
-    function getPartyMembersList() {
+    function getPartyMembersList(options) {
+        options = options || {}
+
+        const includeMissing = options.includeMissing !== false
         const store = getStore()
         const membersMap = store.party.members || {}
         const ids = Object.keys(membersMap)
 
-        const list = ids.map(id => {
+        const list = []
+
+        ids.forEach(id => {
             const ch = getObj('character', id)
+            const isMissing = !ch
+            if (isMissing && !includeMissing) return
+
             const nm = ch ? ch.get('name') : (membersMap[id].name || '(персонаж удалён)')
             const food = (membersMap[id].foodPerDay === undefined || membersMap[id].foodPerDay === null) ? 1 : toNumber(membersMap[id].foodPerDay, 1)
             const water = (membersMap[id].waterGalPerDay === undefined || membersMap[id].waterGalPerDay === null) ? 1 : toNumber(membersMap[id].waterGalPerDay, 1)
-            return { id, name: nm, foodPerDay: food, waterGalPerDay: water }
+
+            list.push({ id, name: nm, foodPerDay: food, waterGalPerDay: water, isMissing: isMissing })
         })
 
         list.sort((a, b) => String(a.name).localeCompare(String(b.name), 'ru'))
@@ -5803,6 +5813,7 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
 
         const members = getPartyMembersList()
         const total = members.length
+        const missingMembers = members.filter(m => m.isMissing)
 
         const top = renderNav(['menu', 'inventory', 'energy'], editable)
 
@@ -5810,6 +5821,7 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
             editable
                 ? ("<div style='text-align:left; margin:6px 0;'>" +
                     btn('＋ Добавить персонажа', 'loot-tracker --party-add|?{ID или имя персонажа}', 'Добавить персонажа в команду') +
+                    (missingMembers.length ? btn('🧹 Очистить удалённых', 'loot-tracker --party-prune-missing', 'Удалить из команды ID персонажей без листа') : '') +
                     "</div>")
                 : ""
 
@@ -5830,6 +5842,7 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
                 "  <div style='display:inline-block; width:68%; vertical-align:top; text-align:left;'>" +
                 "    <div style='color:#fff; word-wrap:break-word; overflow-wrap:break-word;'>" +
                 "      <span style='display:block; font-weight:bold;'>" + (idx + 1) + ". " + htmlEscape(m.name) + "</span>" +
+                (m.isMissing ? "<span style='display:block; color:#ffb3b3; font-size:0.9em;'>⚠ Лист персонажа не найден (старый ID).</span>" : "") +
                 "      <span style='display:block; font-size:0.9em; color:#ccc;'>" +
                 "СИЛ: " + htmlEscape(eff.str) + " <span style='color:#888;'>(" + htmlEscape(eff.source) + ")</span>" +
                 " · Мод: " + htmlEscape(nice2(capMod)) +
@@ -5861,6 +5874,7 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
 
         whisper(playerid, html)
     }
+
 
 
     // ───────────────────────────────────────────────────────────────────────────
@@ -6287,13 +6301,36 @@ function setPartyMemberToolMod(rawArg, playerid) {
         showPartyWindow(playerid)
     }
 
+    function pruneMissingPartyMembers(playerid) {
+        if (!canEdit(playerid)) return whisper(playerid, openReport + "<div style='color:#fff;'>Недостаточно прав (нужен ГМ)</div>" + closeReport)
+
+        const store = getStore()
+        store.party = store.party || {}
+        store.party.members = store.party.members || {}
+
+        const removed = []
+        Object.keys(store.party.members).forEach(id => {
+            if (getObj('character', id)) return
+            const m = store.party.members[id] || {}
+            removed.push(String(m.name || id))
+            delete store.party.members[id]
+        })
+
+        const msg = removed.length
+            ? ("<div style='text-align:left; color:#fff;'>Удалено записей без листа: <b>" + htmlEscape(removed.length) + "</b><br/><span style='color:#aaa; font-size:0.9em;'>" + htmlEscape(removed.join(', ')) + "</span></div>")
+            : "<div style='text-align:left; color:#fff;'>Удалённых листов в команде не найдено.</div>"
+
+        whisper(playerid, openReport + openHeader + "Очистка команды" + closeHeader + msg + closeReport)
+        showPartyWindow(playerid)
+    }
+
     // ───────────────────────────────────────────────────────────────────────────
     // DAY
     // ───────────────────────────────────────────────────────────────────────────
     function subtractDay(playerid) {
         if (!canEdit(playerid)) return whisper(playerid, openReport + "<div style='color:#fff;'>Недостаточно прав (нужен ГМ)</div>" + closeReport)
 
-        const members = getPartyMembersList()
+        const members = getPartyMembersList({ includeMissing: false })
 
         // вода — суммарно, как раньше
         let needWaterGal = 0
