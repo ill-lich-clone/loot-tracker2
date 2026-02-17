@@ -114,7 +114,7 @@
         "арбалетные болты (20)"                   : { type: "снаряжение",           cost: "1 зм", rank: 1, weight: "1,5 фнт.", usage: "", material: "Железо", tools: "Кузнеца", desc: "комплект стандартных болтов, совместимых с ручными и тяжёлыми арбалетами.", value: 10 },
         "иглы для трубки (50)"                    : { type: "снаряжение",           cost: "1 зм", rank: 1, weight: "1 фнт.", usage: "", material: "Железо", tools: "Кузнеца", desc: "тонкие метательные иглы, предназначенные для использования с духовой трубкой.", value: 5 },
         "снаряды для пращи (20)"                  : { type: "снаряжение",           cost: "4 мм", rank: 0, weight: "1,5 фнт.", usage: "", material: "Железо", tools: "Кузнеца", desc: "округлые камни или свинцовые пули для пращи.", value: 5 },
-        "стрелы (20)"                             : { type: "снаряжение",           cost: "1 зм", rank: 1, weight: "1 фнт.", usage: "", material: "Дерево", tools: "Кузнеца", desc: "стандартные стрелы для коротких и длинных луков.", value: 10 },
+        "стрелы (20)"                             : { type: "снаряжение",           cost: "1 зм", rank: 1, weight: "1 фнт.", usage: "", material: "Железо", tools: "Кузнеца", desc: "стандартные стрелы для коротких и длинных луков.", value: 10 },
         "бочка"                                   : { type: "снаряжение",           cost: "2 зм", rank: 1, weight: "70 фнт.", usage: "", material: "Дерево", tools: "Деревянщика", desc: "крупная деревянная ёмкость для хранения и транспортировки жидкостей или сыпучих материалов. Вместимость: 40 галлонов (150 лит.), 4 кубических фута.", value: 5 },
         "бумага (один лист)"                      : { type: "снаряжение",           cost: "2 см", rank: 0, weight: "0,1 фнт.", usage: "", material: "Бумага", tools: "Каллиграфа", desc: "тонкий лист для письма, черчения или заметок.", value: 2 },
         "бурдюк"                                  : { type: "снаряжение",           cost: "2 см", rank: 0, weight: "5 фнт.", usage: "", material: "Кожа", tools: "Кожедела", desc: "Кожаная ёмкость для переноски воды или других жидкостей. Запаса воды в бурдюке достаточно для 1/2 дня Вместимость: 4 пинты (2 лит.).", value: 15 },
@@ -4591,92 +4591,165 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
         const store = getStore()
         const member = store.party.members[memberId]
         if (!member) return ''
-
+    
         const doll = getMemberHeroDoll(member)
         const slots = doll.slots || {}
-
+    
+        // ─────────────────────────────────────────────────────────────────────────
+        // НАСТРОЙКИ
+        // ─────────────────────────────────────────────────────────────────────────
+        const SLOT = 40
+        const GAP = 6
+        const ox = 10
+        const oy = 10
+    
+        // фон-силуэт (будет под слотами, слоты не затемняет)
+        const SIL_URL = "https://files.d20.io/images/476231937/BzuyeRdBuGC05n8uKOXaMw/max.png?1771313642"
+        const SIL_OPACITY = 0.30
+    
+        // сетка: 6x6 + 1 ряд снизу под “спину”
+        const DOLL_COLS = 6
+        const DOLL_ROWS = 6
+        const BACK_ROW = 6
+    
+        const dollW = DOLL_COLS * SLOT + (DOLL_COLS - 1) * GAP
+        const dollH = DOLL_ROWS * SLOT + (DOLL_ROWS - 1) * GAP
+    
+        const gridW = ox * 2 + dollW
+        const gridH = oy * 2 + dollH + (SLOT + GAP) + 10
+    
+        const cell = (c, r) => ({
+            left: ox + c * (SLOT + GAP),
+            top: oy + r * (SLOT + GAP)
+        })
+    
+        // ─────────────────────────────────────────────────────────────────────────
+        // РАСКЛАДКА (твоя текущая)
+        // ─────────────────────────────────────────────────────────────────────────
         const layout = {
-            'Голова': { left: 148, top: 8 },
-            'Шея': { left: 148, top: 64 },
-            'Плечи': { left: 92, top: 64 },
-            'Грудь': { left: 148, top: 120 },
-            'Наручи': { left: 92, top: 120 },
-            'Ноги': { left: 148, top: 176 },
-            'Пояс': { left: 148, top: 232 },
-            'Левая рука': { left: 36, top: 120 },
-            'Правая рука': { left: 260, top: 120 },
-            'Кольцо 1': { left: 92, top: 232 },
-            'Кольцо 2': { left: 204, top: 232 },
-            'Спина 1': { left: 316, top: 8 },
-            'Спина 2': { left: 316, top: 64 },
-            'Спина 3': { left: 316, top: 120 },
-            'Спина 4': { left: 316, top: 176 },
-            'Спина 5': { left: 316, top: 232 }
+            'Голова': cell(2, 0),
+            'Шея': cell(2, 1),
+            'Плечи': cell(2, 2),
+            'Грудь': cell(2, 3),
+            'Пояс': cell(2, 4),
+            'Ноги': cell(2, 5),
+    
+            'Наручи': cell(1, 3),
+    
+            'Левая рука': cell(0, 1),
+            'Правая рука': cell(4, 4),
+    
+            'Кольцо 1': cell(0, 2),
+            'Кольцо 2': cell(3, 3),
+    
+            'Спина 1': cell(0, BACK_ROW),
+            'Спина 2': cell(1, BACK_ROW),
+            'Спина 3': cell(2, BACK_ROW),
+            'Спина 4': cell(3, BACK_ROW),
+            'Спина 5': cell(4, BACK_ROW)
         }
-
-        const ordered = [
-            'Голова', 'Шея', 'Плечи', 'Грудь', 'Наручи', 'Ноги', 'Пояс',
-            'Левая рука', 'Правая рука', 'Кольцо 1', 'Кольцо 2',
-            'Спина 1', 'Спина 2', 'Спина 3', 'Спина 4', 'Спина 5'
-        ]
-
+    
+        const ordered = Object.keys(layout)
+    
+        // ─────────────────────────────────────────────────────────────────────────
+        // СЛОЙ СИЛУЭТА (под слотами)
+        // ─────────────────────────────────────────────────────────────────────────
+        // зона, в которой рисуем силуэт (центр)
+        const coreLeft = ox + 1 * (SLOT + GAP)
+        const coreTop = oy + 0 * (SLOT + GAP)
+        const coreW = 4 * SLOT + 3 * GAP
+        const coreH = 6 * SLOT + 5 * GAP
+    
+        const bgSilhouette =
+            "<div style='" +
+                "position:absolute;" +
+                "left:" + ox + "px;" +
+                "top:" + oy + "px;" +
+                "width:" + dollW + "px;" +
+                "height:" + dollH + "px;" +
+                "background-image:url(" + SIL_URL + ");" +
+                "background-repeat:no-repeat;" +
+                "background-position:center center;" +
+                "background-size:100% 100%;" +
+                "opacity:" + SIL_OPACITY + ";" +
+                "pointer-events:none;" +
+                "user-select:none;" +
+                "z-index:0;" +
+            "'></div>"
+    
+        // ─────────────────────────────────────────────────────────────────────────
+        // РЕНДЕР СЛОТА
+        // ─────────────────────────────────────────────────────────────────────────
         const renderSlot = (slotKey) => {
-            const pos = layout[slotKey] || { left: 0, top: 0 }
+            const pos = layout[slotKey]
+            if (!pos) return ''
+    
             const itemName = String(slots[slotKey] || '').trim()
             const occupied = !!itemName
-
+    
             const bg = occupied ? '#ffffff' : '#7a7a7a'
             const fg = occupied ? '#111111' : '#dcdcdc'
-            const tip = occupied
-                ? (slotKey + ': ' + itemName)
-                : (slotKey + ': пусто')
-
+            const tip = occupied ? (slotKey + ': ' + itemName) : (slotKey + ': пусто')
+    
             const infoCmd = occupied ? ('loot-tracker --info|' + itemName) : ''
             const infoBtn = occupied
                 ? ("<div style='position:absolute; right:2px; bottom:2px;'>" +
                     btn('❓', infoCmd, 'Открыть описание предмета') +
-                "</div>")
+                  "</div>")
                 : ''
-
+    
+            const titleFont = 8
+            const textFont = 9
+    
             const centerText = occupied
-                ? ("<div style='font-size:10px; line-height:1.1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:48px;'>" + htmlEscape(itemName) + "</div>")
-                : "<div style='font-size:10px; opacity:0.7;'>пусто</div>"
-
+                ? ("<div style='font-size:" + textFont + "px; line-height:1.1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:" + (SLOT - 6) + "px;'>" + htmlEscape(itemName) + "</div>")
+                : "<div style='font-size:" + textFont + "px; opacity:0.7;'>пусто</div>"
+    
             return "" +
                 "<div title='" + htmlEscape(tip) + "' style='" +
                     "position:absolute;" +
                     "left:" + pos.left + "px;" +
                     "top:" + pos.top + "px;" +
-                    "width:54px;" +
-                    "height:54px;" +
+                    "width:" + SLOT + "px;" +
+                    "height:" + SLOT + "px;" +
                     "border:1px solid #1d1d1d;" +
                     "background:" + bg + ";" +
                     "color:" + fg + ";" +
-                    "border-radius:3px;" +
+                    "border-radius:4px;" +
                     "box-shadow:inset 0 0 0 1px rgba(0,0,0,0.15);" +
                     "padding:2px;" +
                     "box-sizing:border-box;" +
                     "text-align:center;" +
-                    "font-size:10px;" +
+                    "z-index:10;" +
                 "'>" +
-                    "<div style='font-size:9px; opacity:0.8; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;'>" + htmlEscape(slotKey) + "</div>" +
+                    "<div style='font-size:" + titleFont + "px; opacity:0.8; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;'>" + htmlEscape(slotKey) + "</div>" +
                     centerText +
                     infoBtn +
                 "</div>"
         }
-
-        const silhouette =
-            "<div style='position:absolute; left:123px; top:40px; width:110px; height:235px; " +
-            "background:linear-gradient(180deg, rgba(170,0,0,0.45) 0%, rgba(120,0,0,0.45) 100%); " +
-            "border:1px solid rgba(255,80,80,0.35); border-radius:54px 54px 30px 30px;'></div>" +
-            "<div style='position:absolute; left:154px; top:10px; width:48px; height:52px; background:rgba(170,0,0,0.45); border:1px solid rgba(255,80,80,0.35); border-radius:22px;'></div>"
-
+    
+        // ─────────────────────────────────────────────────────────────────────────
+        // РАМКА И ПОДПИСЬ
+        // ─────────────────────────────────────────────────────────────────────────
+        const dollFrame =
+            "<div style='position:absolute; left:" + (ox - 6) + "px; top:" + (oy - 6) + "px; width:" + (dollW + 12) + "px; height:" + (dollH + 12) + "px;" +
+                "border:1px solid rgba(255,255,255,0.10); border-radius:6px; z-index:3;'></div>"
+    
+        const backLabel =
+            "<div style='position:absolute; left:" + (ox) + "px; top:" + (oy + BACK_ROW * (SLOT + GAP) + SLOT + 2) + "px; width:" + (5 * SLOT + 4 * GAP) + "px;" +
+                "color:rgba(255,255,255,0.45); font-size:10px; text-align:center; z-index:3;'>Спина</div>"
+    
+        // ─────────────────────────────────────────────────────────────────────────
+        // СБОРКА
+        // ─────────────────────────────────────────────────────────────────────────
         return "" +
-            "<div style='position:relative; width:380px; height:300px; margin:0 auto; " +
-                "background:linear-gradient(180deg,#2a190f 0%,#170f0b 100%); " +
+            "<div style='position:relative; width:" + gridW + "px; height:" + gridH + "px; margin:0 auto;" +
+                "background:linear-gradient(180deg,#2a190f 0%,#170f0b 100%);" +
                 "border:1px solid #5f3b1f; border-radius:6px; overflow:hidden;'>" +
-                silhouette +
+                bgSilhouette +
                 ordered.map(renderSlot).join('') +
+                dollFrame +
+                backLabel +
             "</div>"
     }
 
