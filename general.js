@@ -5955,6 +5955,65 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
         return list
     }
 
+    function isRoleTransport(role) {
+        return role === 'transport'
+    }
+
+    function isRoleMember(role) {
+        return role === 'member'
+    }
+
+    function isRoleMountOrTransport(role) {
+        return role === 'mount' || role === 'transport'
+    }
+
+    function getPartyMemberCommands(member, store) {
+        const id = member.id
+        const role = getMemberRole(member)
+        const roleLabelPrompt = '?{Тип существа|Член команды,member|Скакун,mount|Транспорт,transport}'
+
+        return {
+            rmCmd: 'loot-tracker --party-remove|' + id,
+            toolsCmd: 'loot-tracker --party-tools|' + id,
+            roleCmd: 'loot-tracker --party-role|' + id + '|' + roleLabelPrompt,
+            foodCmd: 'loot-tracker --party-consume|' + id + '|food|?{Фунтов еды в день (можно +1/-1 или число)|' + member.foodPerDay + '}',
+            waterCmd: 'loot-tracker --party-consume|' + id + '|water|?{Галлонов воды в день (можно +1/-1 или число)|' + member.waterGalPerDay + '}',
+            customCmd: 'loot-tracker --party-consume-custom|' + id + '|?{Ресурс (например Уголь)|}|?{Расход в день (0 = удалить правило)|0}|?{Ед. lb/gal|lb}',
+            strCmd: 'loot-tracker --party-str|' + id + '|?{СИЛ (пусто = брать с листа)|' + (store.party.members[id] && store.party.members[id].strOverride !== undefined && store.party.members[id].strOverride !== null ? store.party.members[id].strOverride : '') + '}',
+            capCmd: 'loot-tracker --party-capmod-member|' + id + '|?{Модификатор грузоподъёмности (пусто = по умолчанию)|' + (store.party.members[id] && store.party.members[id].capModOverride !== undefined && store.party.members[id].capModOverride !== null ? store.party.members[id].capModOverride : '') + '}',
+            capBonusCmd: 'loot-tracker --party-capbonus-member|' + id + '|?{Грузоподъёмность/бонус, фнт (можно +10/-10)|' + (store.party.members[id] && store.party.members[id].capBonusLb !== undefined && store.party.members[id].capBonusLb !== null ? store.party.members[id].capBonusLb : 0) + '}',
+            role: role
+        }
+    }
+
+    function renderPartyMemberStats(member, role, eff, capMod, capBonus, cap) {
+        if (isRoleTransport(role)) {
+            return "<span style='display:block; font-size:0.9em; color:#ccc;'>Груз.: " + htmlEscape(cap) + " фнт</span>"
+        }
+
+        return "<span style='display:block; font-size:0.9em; color:#ccc;'>" +
+            "СИЛ: " + htmlEscape(eff.str) + " <span style='color:#888;'> (" + htmlEscape(eff.source) + ")</span>" +
+            " · Мод: " + htmlEscape(nice2(capMod)) +
+            (capBonus ? (" · Бонус: +" + htmlEscape(nice2(capBonus)) + " фнт") : "") +
+            " · Груз.: " + htmlEscape(cap) + " фнт" +
+            "</span>"
+    }
+
+    function renderPartyMemberButtons(editable, role, cmds) {
+        if (!editable) return ''
+
+        return '' +
+            btn('🏷', cmds.roleCmd, 'Тип существа: член команды / скакун / транспорт') +
+            (isRoleMountOrTransport(role) ? btn('⛽', cmds.customCmd, 'Задать потребление (например Уголь)') : '') +
+            (!isRoleTransport(role) ? btn('💪', cmds.strCmd, 'Задать СИЛ вручную (или очистить)') : '') +
+            (!isRoleTransport(role) ? btn('🧱', cmds.capCmd, 'Модификатор грузоподъёмности (индивидуально)') : '') +
+            btn('🎒', cmds.capBonusCmd, (isRoleTransport(role) ? 'Грузоподъёмность транспорта (фнт)' : 'Бонус к грузоподъёмности в фнт')) +
+            (role === 'mount' ? btn('🍞', cmds.foodCmd, 'Норма еды в день') : '') +
+            (role === 'mount' ? btn('💧', cmds.waterCmd, 'Норма воды в день') : '') +
+            btn('🗑', cmds.rmCmd, 'Удалить из команды') +
+            (isRoleMember(role) ? btn('⚒️', cmds.toolsCmd, 'Открыть список инструментов') : '')
+    }
+
     function showPartyWindow(playerid) {
         const store = getStore()
         const editable = canEdit(playerid)
@@ -5975,25 +6034,12 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
 
         const body = (members.length ? members.map((m, idx) => {
             const role = getMemberRole(m)
-            const isTransport = role === 'transport'
-            const isMemberRole = role === 'member'
-            const isMountOrTransport = role === 'mount' || role === 'transport'
-
             const eff = getMemberEffectiveStr(m.id)
             const capMod = getMemberCapMod(m.id)
             const capBonus = getMemberCapacityBonusLb(m.id)
             const cap = nice2(getMemberCapacityTotalLb(m.id))
             const consumeShort = renderMemberConsumptionShort(m.id)
-
-            const rmCmd = 'loot-tracker --party-remove|' + m.id
-            const toolsCmd = 'loot-tracker --party-tools|' + m.id
-            const roleCmd = 'loot-tracker --party-role|' + m.id + '|?{Тип существа|Член команды,member|Скакун,mount|Транспорт,transport}'
-            const foodCmd = 'loot-tracker --party-consume|' + m.id + '|food|?{Фунтов еды в день (можно +1/-1 или число)|' + m.foodPerDay + '}'
-            const waterCmd = 'loot-tracker --party-consume|' + m.id + '|water|?{Галлонов воды в день (можно +1/-1 или число)|' + m.waterGalPerDay + '}'
-            const customCmd = 'loot-tracker --party-consume-custom|' + m.id + '|?{Ресурс (например Уголь)|}|?{Расход в день (0 = удалить правило)|0}|?{Ед. lb/gal|lb}'
-            const strCmd = 'loot-tracker --party-str|' + m.id + '|?{СИЛ (пусто = брать с листа)|' + (store.party.members[m.id] && store.party.members[m.id].strOverride !== undefined && store.party.members[m.id].strOverride !== null ? store.party.members[m.id].strOverride : '') + '}'
-            const capCmd = 'loot-tracker --party-capmod-member|' + m.id + '|?{Модификатор грузоподъёмности (пусто = по умолчанию)|' + (store.party.members[m.id] && store.party.members[m.id].capModOverride !== undefined && store.party.members[m.id].capModOverride !== null ? store.party.members[m.id].capModOverride : '') + '}'
-            const capBonusCmd = 'loot-tracker --party-capbonus-member|' + m.id + '|?{Грузоподъёмность/бонус, фнт (можно +10/-10)|' + (store.party.members[m.id] && store.party.members[m.id].capBonusLb !== undefined && store.party.members[m.id].capBonusLb !== null ? store.party.members[m.id].capBonusLb : 0) + '}'
+            const cmds = getPartyMemberCommands(m, store)
 
             return "" +
                 "<div style='margin:4px 0; border-bottom:1px solid #555; padding:4px 2px; display:inline-block; width:100%;'>" +
@@ -6002,27 +6048,12 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
                 "      <span style='display:block; font-weight:bold;'>" + (idx + 1) + ". " + htmlEscape(m.name) + "</span>" +
                 "      <span style='display:block; font-size:0.9em; color:#ccc;'>Тип: " + htmlEscape(getRoleLabel(m.role)) + "</span>" +
                 (m.isMissing ? "<span style='display:block; color:#ffb3b3; font-size:0.9em;'>⚠ Лист персонажа не найден (старый ID).</span>" : "") +
-                (isTransport
-                    ? ("      <span style='display:block; font-size:0.9em; color:#ccc;'>Груз.: " + htmlEscape(cap) + " фнт</span>")
-                    : ("      <span style='display:block; font-size:0.9em; color:#ccc;'>" +
-                        "СИЛ: " + htmlEscape(eff.str) + " <span style='color:#888;'> (" + htmlEscape(eff.source) + ")</span>" +
-                        " · Мод: " + htmlEscape(nice2(capMod)) +
-                        (capBonus ? (" · Бонус: +" + htmlEscape(nice2(capBonus)) + " фнт") : "") +
-                        " · Груз.: " + htmlEscape(cap) + " фнт" +
-                        "</span>")) +
+                renderPartyMemberStats(m, role, eff, capMod, capBonus, cap) +
                 (consumeShort ? ("      <span style='display:block; font-size:0.9em; color:#ccc;'>" + consumeShort + "</span>") : "") +
                 "    </div>" +
                 "  </div>" +
                 "  <div style='display:inline-block; width:30%; text-align:right; vertical-align:top;'>" +
-                (editable ? btn('🏷', roleCmd, 'Тип существа: член команды / скакун / транспорт') : '') +
-                (editable && isMountOrTransport ? btn('⛽', customCmd, 'Задать потребление (например Уголь)') : '') +
-                (editable && !isTransport ? btn('💪', strCmd, 'Задать СИЛ вручную (или очистить)') : '') +
-                (editable && !isTransport ? btn('🧱', capCmd, 'Модификатор грузоподъёмности (индивидуально)') : '') +
-                (editable ? btn('🎒', capBonusCmd, (isTransport ? 'Грузоподъёмность транспорта (фнт)' : 'Бонус к грузоподъёмности в фнт')) : '') +
-                (editable && role === 'mount' ? btn('🍞', foodCmd, 'Норма еды в день') : '') +
-                (editable && role === 'mount' ? btn('💧', waterCmd, 'Норма воды в день') : '') +
-                (editable ? btn('🗑', rmCmd, 'Удалить из команды') : '') +
-                (editable && isMemberRole ? btn('⚒️', toolsCmd, 'Открыть список инструментов') : '') +
+                renderPartyMemberButtons(editable, role, cmds) +
                 "  </div>" +
                 "</div>"
         }).join('') : "<div style='color:#ccc; text-align:left; padding:6px 2px;'>Команда пуста</div>")
@@ -6417,172 +6448,6 @@ function setPartyMemberToolMod(rawArg, playerid) {
             rules.push({ key: field, resource: field === 'food' ? FOOD_ITEM_NAME : WATER_ITEM_NAME, amount: nice2(next), unit: field === 'water' ? 'gal' : 'lb' })
         }
 
-        showPartyWindow(playerid)
-    }
-
-    function setMemberRole(rawArg, playerid) {
-        if (!canEdit(playerid)) return whisper(playerid, openReport + "<div style='color:#fff;'>Недостаточно прав (нужен ГМ)</div>" + closeReport)
-
-        const store = getStore()
-        const parts = String(rawArg || '').split('|').map(s => (s || '').trim())
-        const id = parts[0]
-        const role = getMemberRole({ role: parts[1] || 'member' })
-
-        if (!id || !store.party.members[id]) return showPartyWindow(playerid)
-
-        const m = store.party.members[id]
-        const prevRole = getMemberRole(m)
-        m.role = role
-
-        if (!Array.isArray(m.consumptionRules) || prevRole !== role) {
-            m.consumptionRules = getDefaultConsumptionRulesByRole(role)
-        }
-
-        if (role !== 'member') {
-            m.energyCur = null
-        }
-
-        showPartyWindow(playerid)
-    }
-
-    function setMemberCustomConsumption(rawArg, playerid) {
-        if (!canEdit(playerid)) return whisper(playerid, openReport + "<div style='color:#fff;'>Недостаточно прав (нужен ГМ)</div>" + closeReport)
-
-        const store = getStore()
-        const parts = String(rawArg || '').split('|').map(s => (s || '').trim())
-        const id = parts[0]
-        const resource = parts[1] || ''
-        const amountStr = parts[2] || '0'
-        const unit = normalizeConsumeUnit(parts[3] || 'lb')
-
-        if (!id || !store.party.members[id]) return showPartyWindow(playerid)
-        if (!resource) return showPartyWindow(playerid)
-
-        const amount = toNumber(amountStr.replace('=', ''), NaN)
-        if (isNaN(amount)) return showPartyWindow(playerid)
-
-        const rules = getMemberConsumptionRules(id)
-        const idx = rules.findIndex(r => String(r.resource || '').trim().toLowerCase() === resource.toLowerCase())
-
-        if (amount <= 0) {
-            if (idx >= 0) rules.splice(idx, 1)
-            return showPartyWindow(playerid)
-        }
-
-        const key = resource.toLowerCase() === FOOD_ITEM_NAME.toLowerCase() ? 'food' : (resource.toLowerCase() === WATER_ITEM_NAME.toLowerCase() ? 'water' : 'custom')
-        const nextRule = { key: key, resource: resource, amount: nice2(amount), unit: unit }
-
-        if (idx >= 0) rules[idx] = nextRule
-        else rules.push(nextRule)
-
-        showPartyWindow(playerid)
-    }
-
-    function setMemberCapacityBonus(rawArg, playerid) {
-        if (!canEdit(playerid)) return whisper(playerid, openReport + "<div style='color:#fff;'>Недостаточно прав (нужен ГМ)</div>" + closeReport)
-
-        const store = getStore()
-        const parts = String(rawArg || '').split('|').map(s => (s || '').trim())
-        const id = parts[0]
-        const vStr = parts[1] || ''
-
-        if (!id || !store.party.members[id]) return showPartyWindow(playerid)
-
-        const cur = toNumber(store.party.members[id].capBonusLb, 0)
-
-        if (vStr === '') {
-            store.party.members[id].capBonusLb = 0
-            return showPartyWindow(playerid)
-        }
-
-        const isDelta = /^[+-]/.test(vStr)
-        const v = toNumber(vStr.replace('=', ''), NaN)
-        if (isNaN(v)) return showPartyWindow(playerid)
-
-        store.party.members[id].capBonusLb = nice2(isDelta ? (cur + v) : v)
-        showPartyWindow(playerid)
-    }
-
-    function setMemberRole(rawArg, playerid) {
-        if (!canEdit(playerid)) return whisper(playerid, openReport + "<div style='color:#fff;'>Недостаточно прав (нужен ГМ)</div>" + closeReport)
-
-        const store = getStore()
-        const parts = String(rawArg || '').split('|').map(s => (s || '').trim())
-        const id = parts[0]
-        const role = getMemberRole({ role: parts[1] || 'member' })
-
-        if (!id || !store.party.members[id]) return showPartyWindow(playerid)
-
-        const m = store.party.members[id]
-        const prevRole = getMemberRole(m)
-        m.role = role
-
-        if (!Array.isArray(m.consumptionRules) || prevRole !== role) {
-            m.consumptionRules = getDefaultConsumptionRulesByRole(role)
-        }
-
-        if (role !== 'member') {
-            m.energyCur = null
-        }
-
-        showPartyWindow(playerid)
-    }
-
-    function setMemberCustomConsumption(rawArg, playerid) {
-        if (!canEdit(playerid)) return whisper(playerid, openReport + "<div style='color:#fff;'>Недостаточно прав (нужен ГМ)</div>" + closeReport)
-
-        const store = getStore()
-        const parts = String(rawArg || '').split('|').map(s => (s || '').trim())
-        const id = parts[0]
-        const resource = parts[1] || ''
-        const amountStr = parts[2] || '0'
-        const unit = normalizeConsumeUnit(parts[3] || 'lb')
-
-        if (!id || !store.party.members[id]) return showPartyWindow(playerid)
-        if (!resource) return showPartyWindow(playerid)
-
-        const amount = toNumber(amountStr.replace('=', ''), NaN)
-        if (isNaN(amount)) return showPartyWindow(playerid)
-
-        const rules = getMemberConsumptionRules(id)
-        const idx = rules.findIndex(r => String(r.resource || '').trim().toLowerCase() === resource.toLowerCase())
-
-        if (amount <= 0) {
-            if (idx >= 0) rules.splice(idx, 1)
-            return showPartyWindow(playerid)
-        }
-
-        const key = resource.toLowerCase() === FOOD_ITEM_NAME.toLowerCase() ? 'food' : (resource.toLowerCase() === WATER_ITEM_NAME.toLowerCase() ? 'water' : 'custom')
-        const nextRule = { key: key, resource: resource, amount: nice2(amount), unit: unit }
-
-        if (idx >= 0) rules[idx] = nextRule
-        else rules.push(nextRule)
-
-        showPartyWindow(playerid)
-    }
-
-    function setMemberCapacityBonus(rawArg, playerid) {
-        if (!canEdit(playerid)) return whisper(playerid, openReport + "<div style='color:#fff;'>Недостаточно прав (нужен ГМ)</div>" + closeReport)
-
-        const store = getStore()
-        const parts = String(rawArg || '').split('|').map(s => (s || '').trim())
-        const id = parts[0]
-        const vStr = parts[1] || ''
-
-        if (!id || !store.party.members[id]) return showPartyWindow(playerid)
-
-        const cur = toNumber(store.party.members[id].capBonusLb, 0)
-
-        if (vStr === '') {
-            store.party.members[id].capBonusLb = 0
-            return showPartyWindow(playerid)
-        }
-
-        const isDelta = /^[+-]/.test(vStr)
-        const v = toNumber(vStr.replace('=', ''), NaN)
-        if (isNaN(v)) return showPartyWindow(playerid)
-
-        store.party.members[id].capBonusLb = nice2(isDelta ? (cur + v) : v)
         showPartyWindow(playerid)
     }
 
