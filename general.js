@@ -6567,6 +6567,31 @@ function setPartyMemberToolMod(rawArg, playerid) {
         showPartyWindow(playerid)
     }
 
+    function setMemberCapacityBonus(rawArg, playerid) {
+        if (!canEdit(playerid)) return whisper(playerid, openReport + "<div style='color:#fff;'>Недостаточно прав (нужен ГМ)</div>" + closeReport)
+
+        const store = getStore()
+        const parts = String(rawArg || '').split('|').map(s => (s || '').trim())
+        const id = parts[0]
+        const vStr = parts[1] || ''
+
+        if (!id || !store.party.members[id]) return showPartyWindow(playerid)
+
+        const cur = toNumber(store.party.members[id].capBonusLb, 0)
+
+        if (vStr === '') {
+            store.party.members[id].capBonusLb = 0
+            return showPartyWindow(playerid)
+        }
+
+        const isDelta = /^[+-]/.test(vStr)
+        const v = toNumber(vStr.replace('=', ''), NaN)
+        if (isNaN(v)) return showPartyWindow(playerid)
+
+        store.party.members[id].capBonusLb = nice2(isDelta ? (cur + v) : v)
+        showPartyWindow(playerid)
+    }
+
     function setDefaultCapacityMod(rawArg, playerid) {
         if (!canEdit(playerid)) return whisper(playerid, openReport + "<div style='color:#fff;'>Недостаточно прав (нужен ГМ)</div>" + closeReport)
 
