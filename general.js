@@ -14,6 +14,13 @@
     const WATER_LB_PER_GALLON = 8
 
     // ───────────────────────────────────────────────────────────────────────────
+    // АРХИТЕКТУРА ФАЙЛА (single-file для Roll20)
+    // 1) DATABASE: state/migrations/read-write helpers
+    // 2) LOGIC: расчёты, доменные правила, команды
+    // 3) UI: render/chat окна и кнопки
+    // ───────────────────────────────────────────────────────────────────────────
+
+    // ───────────────────────────────────────────────────────────────────────────
     // CRAFTING: TOOLS + BASE RAW MATERIAL
     // ───────────────────────────────────────────────────────────────────────────
     const CRAFT_HOURS_PER_DAY = 8
@@ -2954,7 +2961,7 @@ function cityBuy(rawArg, playerid) {
     }
 
     // ───────────────────────────────────────────────────────────────────────────
-    // STATE + МИГРАЦИИ (БЕЗ getStore ВНУТРИ)
+    // DATABASE LAYER: STATE + МИГРАЦИИ (БЕЗ getStore ВНУТРИ)
     // ───────────────────────────────────────────────────────────────────────────
     function migrateCoins(store) {
         store.coins = store.coins || { mm: 0, sm: 0, zm: 0, pm: 0 }
@@ -5918,6 +5925,26 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
         whisper(playerid, html)
     }
 
+    // ───────────────────────────────────────────────────────────────────────────
+    // DATABASE LAYER: PARTY RECORD HELPERS
+    // ───────────────────────────────────────────────────────────────────────────
+    function getPartyMemberRecord(store, memberId) {
+        store = store || getStore()
+        const members = store.party && store.party.members ? store.party.members : {}
+        return members[memberId] || null
+    }
+
+    function getPartyMemberField(store, memberId, field, fallback) {
+        const rec = getPartyMemberRecord(store, memberId)
+        if (!rec) return fallback
+
+        const val = rec[field]
+        return (val === undefined || val === null) ? fallback : val
+    }
+
+    // ───────────────────────────────────────────────────────────────────────────
+    // LOGIC LAYER: PARTY LIST
+    // ───────────────────────────────────────────────────────────────────────────
     function getPartyMembersList(options) {
         options = options || {}
 
@@ -5955,6 +5982,9 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
         return list
     }
 
+    // ───────────────────────────────────────────────────────────────────────────
+    // LOGIC LAYER: PARTY ROLE HELPERS
+    // ───────────────────────────────────────────────────────────────────────────
     function isRoleTransport(role) {
         return role === 'transport'
     }
@@ -5967,6 +5997,9 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
         return role === 'mount' || role === 'transport'
     }
 
+    // ───────────────────────────────────────────────────────────────────────────
+    // UI LAYER: PARTY CARD COMMAND/RENDER HELPERS
+    // ───────────────────────────────────────────────────────────────────────────
     function getPartyMemberCommands(member, store) {
         const id = member.id
         const role = getMemberRole(member)
@@ -5979,9 +6012,9 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
             foodCmd: 'loot-tracker --party-consume|' + id + '|food|?{Фунтов еды в день (можно +1/-1 или число)|' + member.foodPerDay + '}',
             waterCmd: 'loot-tracker --party-consume|' + id + '|water|?{Галлонов воды в день (можно +1/-1 или число)|' + member.waterGalPerDay + '}',
             customCmd: 'loot-tracker --party-consume-custom|' + id + '|?{Ресурс (например Уголь)|}|?{Расход в день (0 = удалить правило)|0}|?{Ед. lb/gal|lb}',
-            strCmd: 'loot-tracker --party-str|' + id + '|?{СИЛ (пусто = брать с листа)|' + (store.party.members[id] && store.party.members[id].strOverride !== undefined && store.party.members[id].strOverride !== null ? store.party.members[id].strOverride : '') + '}',
-            capCmd: 'loot-tracker --party-capmod-member|' + id + '|?{Модификатор грузоподъёмности (пусто = по умолчанию)|' + (store.party.members[id] && store.party.members[id].capModOverride !== undefined && store.party.members[id].capModOverride !== null ? store.party.members[id].capModOverride : '') + '}',
-            capBonusCmd: 'loot-tracker --party-capbonus-member|' + id + '|?{Грузоподъёмность/бонус, фнт (можно +10/-10)|' + (store.party.members[id] && store.party.members[id].capBonusLb !== undefined && store.party.members[id].capBonusLb !== null ? store.party.members[id].capBonusLb : 0) + '}',
+            strCmd: 'loot-tracker --party-str|' + id + '|?{СИЛ (пусто = брать с листа)|' + getPartyMemberField(store, id, 'strOverride', '') + '}',
+            capCmd: 'loot-tracker --party-capmod-member|' + id + '|?{Модификатор грузоподъёмности (пусто = по умолчанию)|' + getPartyMemberField(store, id, 'capModOverride', '') + '}',
+            capBonusCmd: 'loot-tracker --party-capbonus-member|' + id + '|?{Грузоподъёмность/бонус, фнт (можно +10/-10)|' + getPartyMemberField(store, id, 'capBonusLb', 0) + '}',
             role: role
         }
     }
@@ -6506,6 +6539,31 @@ function setPartyMemberToolMod(rawArg, playerid) {
         if (idx >= 0) rules[idx] = nextRule
         else rules.push(nextRule)
 
+        showPartyWindow(playerid)
+    }
+
+    function setMemberCapacityBonus(rawArg, playerid) {
+        if (!canEdit(playerid)) return whisper(playerid, openReport + "<div style='color:#fff;'>Недостаточно прав (нужен ГМ)</div>" + closeReport)
+
+        const store = getStore()
+        const parts = String(rawArg || '').split('|').map(s => (s || '').trim())
+        const id = parts[0]
+        const vStr = parts[1] || ''
+
+        if (!id || !store.party.members[id]) return showPartyWindow(playerid)
+
+        const cur = toNumber(store.party.members[id].capBonusLb, 0)
+
+        if (vStr === '') {
+            store.party.members[id].capBonusLb = 0
+            return showPartyWindow(playerid)
+        }
+
+        const isDelta = /^[+-]/.test(vStr)
+        const v = toNumber(vStr.replace('=', ''), NaN)
+        if (isNaN(v)) return showPartyWindow(playerid)
+
+        store.party.members[id].capBonusLb = nice2(isDelta ? (cur + v) : v)
         showPartyWindow(playerid)
     }
 
