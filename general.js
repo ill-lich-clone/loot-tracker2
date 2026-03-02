@@ -13,6 +13,18 @@
     const WATER_ITEM_NAME = 'Галлоны воды'
     const WATER_LB_PER_GALLON = 8
 
+    const TRADER_RANK_VALUE_MAP = {
+        1: 1000,
+        2: 2500,
+        3: 5000,
+        4: 10000,
+        5: 15000,
+        6: 25000,
+        7: 35000,
+        8: 40000,
+        9: 75000
+    }
+
     // ───────────────────────────────────────────────────────────────────────────
     // АРХИТЕКТУРА ФАЙЛА (single-file для Roll20)
     // 1) DATABASE: state/migrations/read-write helpers
@@ -1110,7 +1122,7 @@
 
         let c = store.cities[cityKey]
 
-        const needRegen = (!c || c.ver !== 3 || !c.generatedDay || !c.refreshDay || day >= c.refreshDay)
+        const needRegen = (!c || c.ver !== 4 || !c.generatedDay || !c.refreshDay || day >= c.refreshDay)
 
         if (needRegen) {
             const seed = hash32(cityKey + '|' + day)
@@ -1218,6 +1230,165 @@
             if (!isFinite(costMm) || costMm <= 0) return
             out.push(name)
         })
+        return out
+    }
+
+    function getRankValueTarget(rank) {
+        const r = Math.max(1, Math.floor(toNumber(rank, 1)))
+        if (TRADER_RANK_VALUE_MAP[r]) return TRADER_RANK_VALUE_MAP[r]
+        const keys = Object.keys(TRADER_RANK_VALUE_MAP).map(k => toNumber(k, 0)).filter(v => v > 0).sort((a, b) => a - b)
+        const hi = keys[keys.length - 1] || 1
+        if (r <= hi) return TRADER_RANK_VALUE_MAP[hi]
+        const base = toNumber(TRADER_RANK_VALUE_MAP[hi], 75000)
+        return base + (r - hi) * 10000
+    }
+
+    function getItemBasePriceMm(name, info, source) {
+        if (source === 'magic') {
+            const v = Math.floor(toNumber(info && info.value, 0))
+            return Math.max(1, v * 10)
+        }
+
+        const byCost = parseCostToMm(String((info && info.cost) || '').trim())
+        if (isFinite(byCost) && byCost > 0) return Math.floor(byCost)
+
+        const byValue = Math.floor(toNumber(info && info.value, 0))
+        return Math.max(1, byValue * 10)
+    }
+
+    function getTraderItemCandidatesByRank(tool, traderRank) {
+        const t = String(tool || '').trim()
+        const rank = Math.max(1, Math.floor(toNumber(traderRank, 1)))
+
+        const regular = []
+        Object.keys(LOOT_INFO_MAP || {}).forEach(name => {
+            const info = LOOT_INFO_MAP[name] || {}
+            const r = toNumber(info.rank, 0)
+            if (r > rank) return
+
+            const value = Math.floor(toNumber(info.value, 0))
+            if (!isFinite(value) || value <= 0) return
+
+            const hasTool = t ? lootHasTool(info, t) : true
+            if (!hasTool) return
+
+            regular.push({
+                name,
+                value,
+                isMagic: false,
+                source: 'loot',
+                baseMm: getItemBasePriceMm(name, info, 'loot')
+            })
+        })
+
+        const fallbackRegular = []
+        if (!regular.length) {
+            Object.keys(LOOT_INFO_MAP || {}).forEach(name => {
+                const info = LOOT_INFO_MAP[name] || {}
+                const r = toNumber(info.rank, 0)
+                if (r > rank) return
+                const value = Math.floor(toNumber(info.value, 0))
+                if (!isFinite(value) || value <= 0) return
+                fallbackRegular.push({
+                    name,
+                    value,
+                    isMagic: false,
+                    source: 'loot',
+                    baseMm: getItemBasePriceMm(name, info, 'loot')
+                })
+            })
+        }
+
+        const magicMaxRank = Math.max(0, rank - 2)
+        const magic = []
+        if (magicMaxRank > 0) {
+            Object.keys(MAGIC_ITEM_INFO_MAP || {}).forEach(name => {
+                const info = MAGIC_ITEM_INFO_MAP[name] || {}
+                const r = toNumber(info.rank, 0)
+                if (r > magicMaxRank) return
+
+                const value = Math.floor(toNumber(info.value, 0))
+                if (!isFinite(value) || value <= 0) return
+
+                magic.push({
+                    name,
+                    value,
+                    isMagic: true,
+                    source: 'magic',
+                    baseMm: getItemBasePriceMm(name, info, 'magic')
+                })
+            })
+        }
+
+        return (regular.length ? regular : fallbackRegular).concat(magic)
+    }
+
+    function buildTraderItemGoods(tool, traderRank, rng) {
+        const rank = Math.max(1, Math.floor(toNumber(traderRank, 1)))
+        const targetValue = getRankValueTarget(rank)
+        const itemCap = Math.max(5, rank * 4)
+        const magicCap = Math.floor(itemCap * 0.2)
+
+        const candidates = getTraderItemCandidatesByRank(tool, rank)
+        if (!candidates.length) return []
+
+        const drops = getLoot(targetValue, candidates, 4000) || []
+        const out = []
+        const byName = {}
+        const usedMagic = {}
+        let magicCount = 0
+
+        for (let i = 0; i < drops.length; i++) {
+            const it = drops[i]
+            if (!it || !it.name) continue
+            if (out.length >= itemCap) break
+
+            if (it.isMagic) {
+                if (magicCap <= 0 || magicCount >= magicCap) continue
+                if (usedMagic[it.name]) continue
+
+                usedMagic[it.name] = true
+                magicCount += 1
+
+                const factor = 0.9 + rng() * 0.3
+                const pr = makeTradePrice(it.baseMm, factor)
+                const g = {
+                    id: 'item::' + it.name,
+                    kind: 'item',
+                    name: it.name,
+                    baseUnitMm: Math.round(it.baseMm),
+                    unitMm: Math.max(1, Math.floor(pr.unitMm)),
+                    trend: pr.trend,
+                    stock: 1,
+                    isMagic: true
+                }
+                out.push(g)
+                byName[it.name] = g
+                continue
+            }
+
+            const existing = byName[it.name]
+            if (existing) {
+                existing.stock = Math.max(1, Math.floor(toNumber(existing.stock, 1)) + 1)
+                continue
+            }
+
+            const factor = 0.8 + rng() * 0.4
+            const pr = makeTradePrice(it.baseMm, factor)
+            const rec = {
+                id: 'item::' + it.name,
+                kind: 'item',
+                name: it.name,
+                baseUnitMm: Math.round(it.baseMm),
+                unitMm: Math.max(1, Math.floor(pr.unitMm)),
+                trend: pr.trend,
+                stock: 1,
+                isMagic: false
+            }
+            out.push(rec)
+            byName[it.name] = rec
+        }
+
         return out
     }
 
@@ -1346,12 +1517,6 @@
             const tool = tools[i] || TOOL_LIST[i % TOOL_LIST.length]
             const mName = namePool[i] || ('Торговец #' + (i + 1))
 
-            const lootCandidates = getLootCandidatesForTool(tool, maxRank)
-            const matCandidates = getMaterialCandidatesForTool(tool, maxRank)
-
-            const lootPick = pickUnique(lootCandidates.length ? lootCandidates : fallbackLoot, 5, rng)
-            const matPick = pickUnique(matCandidates.length ? matCandidates : fallbackMats, 4, rng)
-
             const goods = []
 
             // Базовое сырьё данного типа инструментов — без лимита покупки
@@ -1368,30 +1533,16 @@
                     baseUnitMm: Math.round(baseRawBaseMm),
                     unitMm: Math.max(1, Math.floor(pr.unitMm)),
                     trend: pr.trend,
-                    stock: -1,               // ∞
-                    unitKind: 'unit'          // 1 ед. = 0.1 фнт
+                    stock: -1,
+                    unitKind: 'unit'
                 })
             }
 
-            lootPick.forEach(itemName => {
-                const info = LOOT_INFO_MAP[itemName] || {}
-                const baseMm = parseCostToMm(String(info.cost || '').trim())
-                if (!isFinite(baseMm) || baseMm <= 0) return
+            const itemGoods = buildTraderItemGoods(tool, rank, rng)
+            Array.prototype.push.apply(goods, itemGoods)
 
-                const factor = 0.8 + rng() * 0.4
-                const pr = makeTradePrice(baseMm, factor)
-
-                goods.push({
-                    id: 'item::' + itemName,
-                    kind: 'item',
-                    name: itemName,
-                    baseUnitMm: Math.round(baseMm),
-                    unitMm: Math.max(1, Math.floor(pr.unitMm)),
-                    trend: pr.trend,
-                    stock: randInt(rng, 10, 20)
-                })
-            })
-
+            const matCandidates = getMaterialCandidatesForTool(tool, maxRank)
+            const matPick = pickUnique(matCandidates.length ? matCandidates : fallbackMats, 3, rng)
             matPick.forEach(matName => {
                 const baseGpPerLb = getMaterialCostPerLbGp(matName)
                 const baseMmPerLb = Math.round(baseGpPerLb * 100)
@@ -1407,7 +1558,7 @@
                     baseUnitMm: Math.round(baseMmPerLb),
                     unitMm: Math.max(1, Math.floor(pr.unitMm)),
                     trend: pr.trend,
-                    stock: randInt(rng, 10, 20) // фнт
+                    stock: randInt(rng, 10, 20)
                 })
             })
 
@@ -1416,12 +1567,13 @@
                 name: mName,
                 race: race,
                 tool: tool,
+                rank: rank,
                 goods: goods
             })
         }
 
         return {
-            ver: 3,
+            ver: 4,
             key: cityKey,
             name: def.name,
             race: race,
@@ -1444,18 +1596,13 @@
         return 'Человек'
     }
 
-    function generateSingleTraderGoods(race, tool, day, seed) {
+    function generateSingleTraderGoods(race, tool, day, seed, traderRank) {
         const rng = mulberry32(seed)
-        const maxRank = 5
+        const rank = Math.max(1, Math.floor(toNumber(traderRank, 3)))
 
-        const fallbackLoot = getFallbackLootCandidates(maxRank)
-        const fallbackMats = getFallbackMaterialCandidates(maxRank)
-
-        const lootCandidates = getLootCandidatesForTool(tool, maxRank)
-        const matCandidates = getMaterialCandidatesForTool(tool, maxRank)
-
-        const lootPick = pickUnique(lootCandidates.length ? lootCandidates : fallbackLoot, 5, rng)
-        const matPick = pickUnique(matCandidates.length ? matCandidates : fallbackMats, 4, rng)
+        const fallbackMats = getFallbackMaterialCandidates(rank)
+        const matCandidates = getMaterialCandidatesForTool(tool, rank)
+        const matPick = pickUnique(matCandidates.length ? matCandidates : fallbackMats, 3, rng)
 
         const goods = []
 
@@ -1477,24 +1624,8 @@
             })
         }
 
-        lootPick.forEach(itemName => {
-            const info = LOOT_INFO_MAP[itemName] || {}
-            const baseMm = parseCostToMm(String(info.cost || '').trim())
-            if (!isFinite(baseMm) || baseMm <= 0) return
-
-            const factor = 0.8 + rng() * 0.4
-            const pr = makeTradePrice(baseMm, factor)
-
-            goods.push({
-                id: 'item::' + itemName,
-                kind: 'item',
-                name: itemName,
-                baseUnitMm: Math.round(baseMm),
-                unitMm: Math.max(1, Math.floor(pr.unitMm)),
-                trend: pr.trend,
-                stock: randInt(rng, 10, 20)
-            })
-        })
+        const itemGoods = buildTraderItemGoods(tool, rank, rng)
+        Array.prototype.push.apply(goods, itemGoods)
 
         matPick.forEach(matName => {
             const baseGpPerLb = getMaterialCostPerLbGp(matName)
@@ -1533,6 +1664,7 @@
             name: nm,
             race: rc,
             tool: prof,
+            rank: Math.max(1, Math.floor(toNumber(existing.rank, 3))),
             expiresDay: Math.max(day + 30, toNumber(existing.expiresDay, 0)),
             generatedDay: toNumber(existing.generatedDay, 0),
             refreshDay: toNumber(existing.refreshDay, 0),
@@ -1540,12 +1672,13 @@
         }
     }
 
-    function getOrCreateRememberedTrader(rawName, day) {
+    function getOrCreateRememberedTrader(rawName, day, forcedRank) {
         const store = getStore()
         const nameArg = String(rawName || '').trim()
         const defaultName = 'Странствующий торговец'
         const nm = nameArg || defaultName
         const key = normalizeTraderKey(nm)
+        const forced = Math.max(1, Math.floor(toNumber(forcedRank, NaN)))
 
         let rec = store.traderMemory.profiles[key]
         if (!rec || toNumber(rec.expiresDay, 0) < day) {
@@ -1558,6 +1691,7 @@
                 name: nm,
                 race: race,
                 tool: tool,
+                rank: isNaN(forced) ? 3 : forced,
                 expiresDay: day + 30,
                 generatedDay: 0,
                 refreshDay: 0,
@@ -1566,9 +1700,17 @@
             store.traderMemory.profiles[key] = rec
         }
 
+        rec.rank = Math.max(1, Math.floor(toNumber(rec.rank, isNaN(forced) ? 3 : forced)))
+
+        if (!isNaN(forced) && forced !== rec.rank) {
+            rec.rank = forced
+            rec.goods = []
+            rec.refreshDay = 0
+        }
+
         if (!Array.isArray(rec.goods) || !rec.goods.length || day >= toNumber(rec.refreshDay, 0)) {
-            const seed = hash32('memory-trader-goods|' + key + '|' + day)
-            rec.goods = generateSingleTraderGoods(rec.race, rec.tool, day, seed)
+            const seed = hash32('memory-trader-goods|' + key + '|' + day + '|r' + rec.rank)
+            rec.goods = generateSingleTraderGoods(rec.race, rec.tool, day, seed, rec.rank)
             rec.generatedDay = day
             rec.refreshDay = day + 30
         }
@@ -1582,7 +1724,11 @@
         const cal = getCalStore()
         const day = toNumber(cal.day, 1)
 
-        const trader = getOrCreateRememberedTrader(rawArg, day)
+        const parts = String(rawArg || '').split('|').map(s => (s || '').trim())
+        const traderName = parts[0] || rawArg
+        const traderRank = Math.max(1, Math.floor(toNumber(parts[1], NaN)))
+
+        const trader = getOrCreateRememberedTrader(traderName, day, traderRank)
         if (!trader) return whisper(playerid, openReport + "<div style='color:#fff;'>Не удалось загрузить торговца</div>" + closeReport)
 
         const m = {
@@ -1590,7 +1736,8 @@
             name: trader.name,
             race: trader.race,
             tool: trader.tool,
-            goods: trader.goods
+            goods: trader.goods,
+            rank: Math.max(1, Math.floor(toNumber(trader.rank, 3)))
         }
 
         const prof = toolToProfession(m.tool)
@@ -1641,7 +1788,7 @@
             openReport +
             openHeader + 'Запомненный торговец' + closeHeader +
             "<div style='text-align:left; color:#fff;'>" +
-            "<div><b>" + htmlEscape(m.name) + "</b> — <span style='color:#aaa;'>" + htmlEscape(prof) + "</span></div>" +
+            "<div><b>" + htmlEscape(m.name) + "</b> — <span style='color:#aaa;'>" + htmlEscape(prof) + " · ранг " + htmlEscape(m.rank) + "</span></div>" +
             "<div style='margin-top:4px; color:#ccc;'>Народ: " + htmlEscape(m.race) + " · Память до дня " + htmlEscape(trader.expiresDay) + " · Обновление товаров: день " + htmlEscape(trader.refreshDay) + "</div>" +
             "<div style='margin-top:8px;'><table style='width:100%; border-collapse:collapse;'><tr style='color:#aaa; border-bottom:1px solid #333;'><th style='text-align:left; padding:2px 6px;'>Товар</th><th style='text-align:left; padding:2px 6px;'>Цена</th></tr>" + rows + "</table></div>" +
             "<div style='margin-top:8px;'>" + renderNav(['cities', 'menu', 'inventory', 'materials', 'craft', 'craftQueue'], editable, 'left') + "</div>" +
@@ -3600,7 +3747,6 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
     }
 
     function filterCandidatesByParams(typesList, magicMode) {
-        const keys = Object.keys(LOOT_INFO_MAP || {})
         const wantAnyType = !typesList.length || typesList.includes('любой') || typesList.includes('any')
 
         const mode = String(magicMode || 'нет').trim().toLowerCase()
@@ -3613,7 +3759,7 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
 
         const out = []
 
-        keys.forEach(name => {
+        Object.keys(LOOT_INFO_MAP || {}).forEach(name => {
             const info = LOOT_INFO_MAP[name]
             if (!info) return
 
@@ -3636,9 +3782,34 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
             out.push({
                 name,
                 value: Math.floor(v),
-                unitWeight: nice2(w)
+                unitWeight: nice2(w),
+                isMagic: magic,
+                source: 'loot'
             })
         })
+
+        if (allowMagic || onlyMagic) {
+            Object.keys(MAGIC_ITEM_INFO_MAP || {}).forEach(name => {
+                const info = MAGIC_ITEM_INFO_MAP[name]
+                if (!info) return
+
+                const v = toNumber(info.value, NaN)
+                if (isNaN(v) || v <= 0) return
+
+                const r = toNumber(info.rank, 0)
+                if (!isFinite(r) || r <= 0) return
+
+                if (!wantAnyType && !typesList.includes('магический предмет') && !typesList.includes('магические предметы')) return
+
+                out.push({
+                    name,
+                    value: Math.floor(v),
+                    unitWeight: 2,
+                    isMagic: true,
+                    source: 'magic'
+                })
+            })
+        }
 
         return out
     }
@@ -3866,14 +4037,29 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
             return renderLootGenToChat()
         }
 
-        // 1) генерируем список выпавших предметов (могут повторяться)
+        // 1) генерируем список выпавших предметов
         const drops = LOOTGEN_STRATEGY(targetValue, candidates, 9999) || []
 
         // 2) превращаем список в map name -> { qty, value, unitWeight }
         const chosen = {}
+        const magicUsed = {}
+        const requestedCount = Math.max(1, Math.floor(maxSlots))
+        const maxMagicCount = Math.floor(requestedCount * 0.2)
+        let totalCount = 0
+        let magicCount = 0
+
         for (let i = 0; i < drops.length; i++) {
             const it = drops[i]
             if (!it || !it.name) continue
+            if (totalCount >= maxSlots) break
+
+            const isMagicDrop = (it.isMagic === true) || (it.source === 'magic')
+            if (isMagicDrop) {
+                if (maxMagicCount <= 0 || magicCount >= maxMagicCount) continue
+                if (magicUsed[it.name]) continue
+                magicUsed[it.name] = true
+                magicCount += 1
+            }
 
             const nm = it.name
             chosen[nm] = chosen[nm] || {
@@ -3882,15 +4068,13 @@ function applyDeltaOrSetNumber(cur, raw, fallback) {
                 unitWeight: nice2(toNumber(it.unitWeight, 0))
             }
 
-            chosen[nm].qty += 1
-
-            // ограничение по maxSlots: считаем "слоты" как количество уникальных позиций
-            if (Object.keys(chosen).length > maxSlots) {
-                // откат последнего добавления
-                chosen[nm].qty -= 1
-                if (chosen[nm].qty <= 0) delete chosen[nm]
-                break
+            if (isMagicDrop) {
+                chosen[nm].qty = 1
+            } else {
+                chosen[nm].qty += 1
             }
+
+            totalCount += 1
         }
 
         lg.items = chosen
@@ -7441,7 +7625,7 @@ function skipDay(playerid) {
             "<div><b>Задать мод Телосложения вручную</b>: " + htmlEscape(CMD_ROOT) + " --energy-con|ID|mod</div>" +
             "<div><b>Генератор лута</b>: " + htmlEscape(CMD_ROOT) + " --lootgen-generate|value|типы|магия|слоты|монеты</div>" +
             "<div style='color:#aaa; font-size:0.9em;'>Пример: --lootgen-generate|200|общее,ремесло|нет|5|да</div>" +
-            "<div><b>Запомненный торговец</b>: " + htmlEscape(CMD_ROOT) + " --show-trader|имя</div>" +
+            "<div><b>Запомненный торговец</b>: " + htmlEscape(CMD_ROOT) + " --show-trader|имя|ранг</div>" +
             "</div>" +
             closeReport
 
